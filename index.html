@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Six-Point Scotch</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" onerror="console.warn('Fonts blocked, using system fonts')">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html,body{height:100%;overflow:hidden}
-body{font-family:'DM Sans',sans-serif;background:#0d1117;color:#e8e0d5;font-size:15px}
+body{font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e8e0d5;font-size:15px}
 :root{
   --green:#22c55e;--green-dim:rgba(34,197,94,0.15);
   --red:#ef4444;--red-dim:rgba(239,68,68,0.15);
@@ -163,10 +163,31 @@ details[open] summary .chevron{transform:rotate(180deg)}
 </style>
 </head>
 <body>
-<div id="root"></div>
+<div id="root">
+  <div id="loading" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:16px;color:#8b9aaa;font-family:system-ui,sans-serif">
+    <div style="font-size:32px">⛳</div>
+    <div style="font-size:14px;letter-spacing:0.1em">Loading Six-Point Scotch…</div>
+  </div>
+</div>
+<div id="fatal-error" style="display:none;padding:32px;color:#ef4444;font-family:system-ui,sans-serif;background:#0d1117;min-height:100vh">
+  <h2 style="margin-bottom:12px">⚠️ Failed to load</h2>
+  <p style="color:#8b9aaa;margin-bottom:16px">React could not be loaded from the CDN. Check your internet connection and try refreshing.</p>
+  <pre id="error-detail" style="font-size:12px;color:#4d5a68;white-space:pre-wrap"></pre>
+</div>
 
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script>
+window.onerror=function(msg,src,line,col,err){
+  document.getElementById('loading').style.display='none';
+  document.getElementById('fatal-error').style.display='block';
+  document.getElementById('error-detail').textContent=msg+'\n'+(err&&err.stack||'');
+};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js" crossorigin
+  onerror="document.getElementById('loading').style.display='none';document.getElementById('fatal-error').style.display='block';document.getElementById('error-detail').textContent='Failed to load React from CDN';">
+</script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js" crossorigin
+  onerror="document.getElementById('loading').style.display='none';document.getElementById('fatal-error').style.display='block';document.getElementById('error-detail').textContent='Failed to load ReactDOM from CDN';">
+</script>
 <script>
 const {useState,useEffect,useCallback,useMemo,useRef}=React;
 const h=React.createElement;
@@ -1126,6 +1147,7 @@ function CoursesTab({state,setState,courses}){
 }
 
 // ─── BOOT ────────────────────────────────────────────────────────
+document.getElementById('loading').style.display='none';
 const root=ReactDOM.createRoot(document.getElementById('root'));
 root.render(h(App,null));
 </script>
