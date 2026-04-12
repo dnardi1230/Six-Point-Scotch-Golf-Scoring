@@ -225,7 +225,11 @@ const BUILT_IN_COURSES=[
 ];
 
 const TEAM_COLORS=['team-a','team-b'];
-const SEG_TEAMS=[[0,1],[2,3],[0,2]]; // [p1idx,p2idx] for segments 0,1,2
+// Team A indices per segment — true round-robin rotation:
+// Seg 0 (1-6):   P0+P1 vs P2+P3
+// Seg 1 (7-12):  P0+P2 vs P1+P3
+// Seg 2 (13-18): P0+P3 vs P1+P2
+const SEG_TEAMS=[[0,1],[0,2],[0,3]];
 
 // ─── STORAGE ──────────────────────────────────────────────────────
 const SK='sps_v3';
