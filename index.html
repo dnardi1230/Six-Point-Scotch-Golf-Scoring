@@ -421,10 +421,10 @@ function App(){
   };
 
   const tabs=[
-    {id:'scoring',label:'⛳ Score'},
-    {id:'leaderboard',label:'🏆 Board'},
-    {id:'setup',label:'⚙️ Setup'},
-    {id:'courses',label:'🗺️ Courses'},
+    {id:'scoring',label:'Input Scoring'},
+    {id:'leaderboard',label:'Leaderboard'},
+    {id:'setup',label:'Setup Round'},
+    {id:'courses',label:'Courses'},
   ];
 
   return h('div',{id:'root'},
@@ -806,6 +806,108 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
             h('td',{style:{color:'var(--blue)',fontWeight:700}},grandTotal.a),
             h('td',{style:{color:'var(--amber)',fontWeight:700}},grandTotal.b),
             h('td',null,''),
+          )
+        )
+      )
+    ),
+
+    // ─── Player Point Outcomes ───────────────────────────────────────
+    h('div',{className:'section-title',style:{marginTop:20}},'Player Point Outcomes'),
+    h('div',{style:{fontSize:12,color:'var(--text2)',marginBottom:10}},
+      'Points each player contributed to their team per hole. Color shows team for that segment.'
+    ),
+    h('div',{style:{overflowX:'auto',borderRadius:8,border:'1px solid var(--border)'}},
+      h('table',{className:'gross-table',style:{minWidth:500}},
+        h('thead',null,
+          h('tr',null,
+            h('th',{style:{textAlign:'left',paddingLeft:8,minWidth:32}},'#'),
+            h('th',{style:{minWidth:36}},'Par'),
+            ...state.players.map((p,i)=>h('th',{key:i,style:{minWidth:70}},p.name.split(' ')[0])),
+            h('th',{style:{minWidth:44}},'☂'),
+            h('th',{style:{minWidth:36}},'×'),
+          )
+        ),
+        h('tbody',null,
+          Array.from({length:18},(_,holeIdx)=>{
+            const r=holeResults[holeIdx];
+            const par=course?.par[holeIdx]||4;
+            const seg=Math.floor(holeIdx/6);
+            const{a:teamA,b:teamB}=getTeamForSeg(seg);
+            const hasData=state.holes[holeIdx].scores.some(s=>s!=null);
+            // Build per-player earned points breakdown
+            const playerPts=state.players.map((_,pi)=>{
+              if(!hasData)return{pts:null,cats:[]};
+              const isTeamA=teamA.includes(pi);
+              const myTeam=isTeamA?'a':'b';
+              const gross=state.holes[holeIdx].scores[pi];
+              const net=gross!=null?gross-r.strokes[pi]:null;
+              let cats=[];
+              let pts=0;
+              // PROX
+              if(r.prox===myTeam){cats.push('P');pts+=1;}
+              // BIRDIE — only the player who made the birdie gets credit
+              if(gross!=null&&gross<=par-1&&r.birdie===myTeam){cats.push('B');pts+=1;}
+              // LOW NET — the player with the lowest net on the team gets credit
+              const teamNetScores=teamA.includes(pi)?
+                teamA.map(i=>r.net[i]).filter(v=>v!=null):
+                teamB.map(i=>r.net[i]).filter(v=>v!=null);
+              const myNet=net;
+              const bestTeamNet=teamNetScores.length?Math.min(...teamNetScores):null;
+              if(myNet!=null&&myNet===bestTeamNet&&r.low===myTeam){cats.push('L');pts+=2;}
+              // TOTAL — both players on winning team share credit
+              if(r.total===myTeam){cats.push('T');pts+=2;}
+              // Apply multiplier
+              const finalPts=pts*r.multiplier;
+              return{pts:finalPts,cats,isTeamA};
+            });
+            return h('tr',{key:holeIdx,style:{background:holeIdx===state.currentHole?'rgba(212,168,67,0.06)':''}},
+              h('td',{style:{textAlign:'left',paddingLeft:8,fontFamily:"'DM Mono',monospace",fontSize:11}},holeIdx+1),
+              h('td',null,par),
+              ...playerPts.map((pp,pi)=>{
+                if(!hasData||pp.pts==null)return h('td',{key:pi,style:{color:'var(--text3)'}},'—');
+                const col=pp.isTeamA?'var(--blue)':'var(--amber)';
+                return h('td',{key:pi},
+                  h('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:2}},
+                    pp.pts>0
+                      ?h('span',{style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:17,color:col,lineHeight:1}},pp.pts)
+                      :h('span',{style:{color:'var(--text3)',fontSize:13}},'0'),
+                    pp.cats.length>0&&h('span',{style:{fontSize:8,color:col,opacity:0.7,letterSpacing:'0.05em',fontFamily:"'DM Mono',monospace"}},
+                      pp.cats.join(' ')
+                    )
+                  )
+                );
+              }),
+              h('td',null,r.umbrella?h('span',{className:'badge badge-gold'},'12'):'—'),
+              h('td',null,r.multiplier>1?h('span',{className:'badge badge-red'},`×${r.multiplier}`):'—'),
+            );
+          })
+        ),
+        h('tfoot',null,
+          h('tr',{style:{borderTop:'2px solid var(--border2)'}},
+            h('td',{colSpan:2,style:{textAlign:'left',paddingLeft:8,fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:600}},'TOTAL'),
+            ...state.players.map((_,pi)=>{
+              // sum all points this player contributed
+              const tot=holeResults.reduce((sum,r,holeIdx)=>{
+                const seg=Math.floor(holeIdx/6);
+                const{a:teamA,b:teamB}=getTeamForSeg(seg);
+                const isTeamA=teamA.includes(pi);
+                const myTeam=isTeamA?'a':'b';
+                const gross=state.holes[holeIdx].scores[pi];
+                const net=r.net?r.net[pi]:null;
+                if(gross==null)return sum;
+                let pts=0;
+                const par=course?.par[holeIdx]||4;
+                if(r.prox===myTeam)pts+=1;
+                if(gross<=par-1&&r.birdie===myTeam)pts+=1;
+                const teamNetArr=isTeamA?teamA.map(i=>r.net&&r.net[i]).filter(v=>v!=null):teamB.map(i=>r.net&&r.net[i]).filter(v=>v!=null);
+                if(net!=null&&teamNetArr.length&&net===Math.min(...teamNetArr)&&r.low===myTeam)pts+=2;
+                if(r.total===myTeam)pts+=2;
+                return sum+pts*r.multiplier;
+              },0);
+              const isA=[0,1,2,3].some(s=>getTeamForSeg(Math.floor(0/6)).a.includes(pi));
+              return h('td',{key:pi,style:{fontWeight:700,fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:'var(--gold)'}},tot||'—');
+            }),
+            h('td',{colSpan:2})
           )
         )
       )
