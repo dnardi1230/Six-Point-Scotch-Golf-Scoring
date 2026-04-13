@@ -233,7 +233,21 @@ const SEG_TEAMS=[[0,1],[0,2],[0,3]];
 
 // ─── STORAGE ──────────────────────────────────────────────────────
 const SK='sps_v3';
-function loadState(){try{const s=localStorage.getItem(SK);return s?JSON.parse(s):null}catch{return null}}
+function loadState(){
+  try{
+    const s=localStorage.getItem(SK);
+    if(!s)return null;
+    const parsed=JSON.parse(s);
+    // Migrate old prox format: 'a'/'b' strings → null (player index not known)
+    if(parsed.holes){
+      parsed.holes=parsed.holes.map(h=>({
+        ...h,
+        prox:(h.prox==='a'||h.prox==='b')?null:h.prox
+      }));
+    }
+    return parsed;
+  }catch{return null}
+}
 function saveState(s){try{localStorage.setItem(SK,JSON.stringify(s))}catch{}}
 
 // ─── HANDICAP CALC ────────────────────────────────────────────────
@@ -275,7 +289,12 @@ function calcHolePoints(holeData,holeIdx,course,teeIdx,players,chcps){
   const net=players.map((p,pi)=>gross[pi]!=null?gross[pi]-strokes[pi]:null);
 
   // PROX: manual, 1pt
-  const prox=holeData.prox; // 'a','b', or null
+  // prox stored as player index string '0'-'3', or null
+  // Guard against old 'a'/'b' format saved in localStorage
+  const proxRaw=holeData.prox;
+  const proxParsed=proxRaw!=null&&proxRaw!==''?parseInt(proxRaw):NaN;
+  const proxPlayerIdx=(!isNaN(proxParsed)&&proxParsed>=0&&proxParsed<=3)?proxParsed:null;
+  const prox=proxPlayerIdx!=null?(teamA.includes(proxPlayerIdx)?'a':'b'):null;
 
   // BIRDIE: natural birdie (gross <= par-1), per team. 1pt if any player on team makes it
   // Team that has it gets 1pt if they have a birdie and opponent doesn't, or both=tie
@@ -329,7 +348,7 @@ function calcHolePoints(holeData,holeIdx,course,teeIdx,players,chcps){
   if(holeData.reroll)mult*=2;
 
   return{
-    prox,low,total,birdie,umbrella,multiplier:mult,
+    prox,proxPlayerIdx,low,total,birdie,umbrella,multiplier:mult,
     pts:{a:pts_a*mult,b:pts_b*mult},
     base:{a:base_a,b:base_b},
     strokes,net,gross
@@ -455,9 +474,9 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
   const teamBNames=teamB.map(i=>state.players[i].name).join(' & ');
 
   const proxOptions=[
-    {val:null,label:'—'},
-    {val:'a',label:teamANames},
-    {val:'b',label:teamBNames},
+    {val:null,label:'— None —'},
+    ...teamA.filter(pi=>state.players[pi]).map(pi=>({val:String(pi),label:state.players[pi].name||'Player '+(pi+1)})),
+    ...teamB.filter(pi=>state.players[pi]).map(pi=>({val:String(pi),label:state.players[pi].name||'Player '+(pi+1)})),
   ];
 
   // Segment recap holes
@@ -531,7 +550,7 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
     // Points display
     h('div',{className:'pts-row'},
       [
-        {key:'prox',label:'PROX',val:result.prox,pts:1},
+        {key:'prox',label:'PROX',special:'prox'},
         {key:'low',label:'LOW',val:result.low,pts:2},
         {key:'total',label:'TOTAL',val:result.total,pts:2},
         {key:'birdie',label:'BIRDIE',val:result.birdie,pts:1},
@@ -539,7 +558,13 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
         {key:'umbrella',label:'☂',special:'umbrella'},
       ].map(item=>{
         let display='—', cls='na';
-        if(item.special==='mult'){
+        if(item.special==='prox'){
+          const proxPi=result.proxPlayerIdx;
+          if(proxPi!=null&&state.players[proxPi]){
+            display=state.players[proxPi].name.split(' ')[0];
+            cls='awarded';
+          }
+        } else if(item.special==='mult'){
           display=`×${result.multiplier}`;
           cls=result.multiplier>1?'awarded':'na';
         } else if(item.special==='umbrella'){
@@ -552,7 +577,7 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
         }
         return h('div',{key:item.key,className:'pt-box'},
           h('span',{className:'pt-label'},item.label),
-          h('div',{className:`pt-val ${cls}`,style:{fontSize:item.special?14:16}},display)
+          h('div',{className:`pt-val ${cls}`,style:{fontSize:item.special==='prox'&&result.proxPlayerIdx!=null&&state.players[result.proxPlayerIdx]?12:item.special?14:16}},display)
         );
       })
     ),
@@ -579,7 +604,7 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
       h('label',{className:'label'},'PROX (closest to pin · 1pt)'),
       h('select',{
         className:'input select',
-        value:holeData.prox===null?'':holeData.prox,
+        value:holeData.prox===null||holeData.prox===undefined?'':String(holeData.prox),
         onChange:e=>updateHole(hi,'prox',e.target.value===''?null:e.target.value)
       },
         proxOptions.map(o=>h('option',{key:String(o.val),value:o.val===null?'':o.val},o.label))
@@ -651,45 +676,27 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
   const playerColors=['var(--gold)','#4ade80','#f87171','#a78bfa'];
 
   // Per-player points total across all holes
+  // Both players on a team receive the same points — team points from holeResults
   function playerTotalPts(pi){
     return holeResults.reduce((sum,r,holeIdx)=>{
       const seg=Math.floor(holeIdx/6);
       const{a:teamA,b:teamB}=getTeamForSeg(seg);
       const isTeamA=teamA.includes(pi);
-      const myTeam=isTeamA?'a':'b';
-      const gross=state.holes[holeIdx].scores[pi];
-      if(gross==null)return sum;
-      const par=course?.par[holeIdx]||4;
-      let pts=0;
-      if(r.prox===myTeam)pts+=1;
-      if(gross<=par-1&&r.birdie===myTeam)pts+=1;
-      const teamNetArr=isTeamA?teamA.map(i=>r.net&&r.net[i]).filter(v=>v!=null):teamB.map(i=>r.net&&r.net[i]).filter(v=>v!=null);
-      const myNet=r.net?r.net[pi]:null;
-      if(myNet!=null&&teamNetArr.length&&myNet===Math.min(...teamNetArr)&&r.low===myTeam)pts+=2;
-      if(r.total===myTeam)pts+=2;
-      return sum+pts*r.multiplier;
+      // Only count if this player has entered a score on this hole
+      if(state.holes[holeIdx].scores[pi]==null)return sum;
+      return sum+(isTeamA?r.pts.a:r.pts.b);
     },0);
   }
 
-  // Per-player points per segment
+  // Per-player points per segment — teammates always get the same pts
   function playerSegPts(pi,seg){
     const start=seg*6;
     return holeResults.slice(start,start+6).reduce((sum,r,si)=>{
       const holeIdx=start+si;
       const{a:teamA,b:teamB}=getTeamForSeg(seg);
       const isTeamA=teamA.includes(pi);
-      const myTeam=isTeamA?'a':'b';
-      const gross=state.holes[holeIdx].scores[pi];
-      if(gross==null)return sum;
-      const par=course?.par[holeIdx]||4;
-      let pts=0;
-      if(r.prox===myTeam)pts+=1;
-      if(gross<=par-1&&r.birdie===myTeam)pts+=1;
-      const teamNetArr=isTeamA?teamA.map(i=>r.net&&r.net[i]).filter(v=>v!=null):teamB.map(i=>r.net&&r.net[i]).filter(v=>v!=null);
-      const myNet=r.net?r.net[pi]:null;
-      if(myNet!=null&&teamNetArr.length&&myNet===Math.min(...teamNetArr)&&r.low===myTeam)pts+=2;
-      if(r.total===myTeam)pts+=2;
-      return sum+pts*r.multiplier;
+      if(state.holes[holeIdx].scores[pi]==null)return sum;
+      return sum+(isTeamA?r.pts.a:r.pts.b);
     },0);
   }
 
@@ -897,16 +904,20 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
               if(!hasData)return{pts:null,cats:[]};
               const isTeamA=teamA.includes(pi);
               const myTeam=isTeamA?'a':'b';
-              const gross=state.holes[holeIdx].scores[pi];
-              const net=gross!=null?gross-r.strokes[pi]:null;
+              if(state.holes[holeIdx].scores[pi]==null)return{pts:null,cats:[],isTeamA};
               let cats=[],pts=0;
-              if(r.prox===myTeam){cats.push('P');pts+=1;}
-              if(gross!=null&&gross<=par-1&&r.birdie===myTeam){cats.push('B');pts+=1;}
-              const teamNetScores=isTeamA?teamA.map(i=>r.net[i]).filter(v=>v!=null):teamB.map(i=>r.net[i]).filter(v=>v!=null);
-              const myNet=net;
-              const bestTeamNet=teamNetScores.length?Math.min(...teamNetScores):null;
-              if(myNet!=null&&myNet===bestTeamNet&&r.low===myTeam){cats.push('L');pts+=2;}
-              if(r.total===myTeam){cats.push('T');pts+=2;}
+              // PRX — only the specific player selected as closest to pin
+              if(r.proxPlayerIdx!=null&&r.proxPlayerIdx===pi&&state.players[pi]){cats.push('PRX');pts+=1;}
+              // BRD — only players who personally made a natural birdie on winning team
+              const gross=state.holes[holeIdx].scores[pi];
+              if(gross!=null&&gross<=par-1&&r.birdie===myTeam){cats.push('BRD');pts+=1;}
+              // LOW — only the player with the best net on the winning team
+              if(r.low===myTeam&&r.net&&r.net[pi]!=null){
+                const teamNets=isTeamA?teamA.map(i=>r.net[i]).filter(v=>v!=null):teamB.map(i=>r.net[i]).filter(v=>v!=null);
+                if(r.net[pi]===Math.min(...teamNets)){cats.push('LOW');pts+=2;}
+              }
+              // TOT — both players on winning team share this
+              if(r.total===myTeam){cats.push('TOT');pts+=2;}
               const finalPts=pts*r.multiplier;
               return{pts:finalPts,cats,isTeamA};
             });
