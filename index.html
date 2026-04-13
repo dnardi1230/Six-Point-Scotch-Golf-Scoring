@@ -450,14 +450,14 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
   const{a:teamA,b:teamB}=getTeamForSeg(seg);
   const strokes=result.strokes||[0,0,0,0];
 
-  const segLabel=['Holes 1–6','Holes 7–12','Holes 13–18'][seg];
+  const segLabel=['The Opener','The Neat','The Nightcap'][seg];
   const teamANames=teamA.map(i=>state.players[i].name).join(' & ');
   const teamBNames=teamB.map(i=>state.players[i].name).join(' & ');
 
   const proxOptions=[
     {val:null,label:'—'},
-    {val:'a',label:'Team A ('+teamANames+')'},
-    {val:'b',label:'Team B ('+teamBNames+')'},
+    {val:'a',label:teamANames},
+    {val:'b',label:teamBNames},
   ];
 
   // Segment recap holes
@@ -469,8 +469,8 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
     h('div',null,
       h('div',{style:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'4px',marginBottom:'4px'}},
         [0,1,2].map(s=>{
-          const sl=['1–6','7–12','13–18'][s];
-          return h('div',{key:s,className:'seg-label'},`Seg ${s+1}: ${sl}`);
+          const sl=['The Opener','The Neat','The Nightcap'][s];
+          return h('div',{key:s,className:'seg-label'},sl);
         })
       ),
       h('div',{className:'hole-grid'},
@@ -607,7 +607,7 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
     // Segment recap
     h('details',{style:{marginBottom:8}},
       h('summary',{style:{background:'var(--surface2)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 14px',marginBottom:4}},
-        h('span',{style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:16,letterSpacing:'0.05em',color:'var(--text2)'}},`SEGMENT ${seg+1} RECAP`),
+        h('span',{style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:16,letterSpacing:'0.05em',color:'var(--text2)'}},['THE OPENER','THE NEAT','THE NIGHTCAP'][seg]+' RECAP'),
         h('span',{className:'chevron'},'▼')
       ),
       h('div',{style:{background:'var(--surface2)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 14px'}},
@@ -641,32 +641,84 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
 // ─── LEADERBOARD TAB ─────────────────────────────────────────────
 function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,grandTotal}){
   const [dollarsPerPt,setDollarsPerPt]=useState(state.dollarPerPt||1);
-
   useEffect(()=>{setState(s=>({...s,dollarPerPt:dollarsPerPt}))},[dollarsPerPt]);
 
-  const totalPts=grandTotal.a+grandTotal.b;
-  const maxPts=Math.max(grandTotal.a,grandTotal.b,1);
-
-  // gross score table
   const f9par=course?course.par.slice(0,9).reduce((s,p)=>s+p,0):36;
   const b9par=course?course.par.slice(9).reduce((s,p)=>s+p,0):36;
   const totalPar=f9par+b9par;
 
-  const playerGross=state.players.map((p,pi)=>{
-    const f9=state.holes.slice(0,9).reduce((s,h)=>s+(h.scores[pi]||0),0);
-    const b9=state.holes.slice(9).reduce((s,h)=>s+(h.scores[pi]||0),0);
-    return{f9,b9,total:f9+b9};
-  });
+  const segNames=['The Opener','The Neat','The Nightcap'];
+  const playerColors=['var(--gold)','#4ade80','#f87171','#a78bfa'];
 
-  // payout: net points diff × dollars
-  const netDiff=grandTotal.a-grandTotal.b; // positive = A wins
-  const dollarAmt=Math.abs(netDiff)*dollarsPerPt;
-  const winner=netDiff>0?'A':netDiff<0?'B':'Tie';
+  // Per-player points total across all holes
+  function playerTotalPts(pi){
+    return holeResults.reduce((sum,r,holeIdx)=>{
+      const seg=Math.floor(holeIdx/6);
+      const{a:teamA,b:teamB}=getTeamForSeg(seg);
+      const isTeamA=teamA.includes(pi);
+      const myTeam=isTeamA?'a':'b';
+      const gross=state.holes[holeIdx].scores[pi];
+      if(gross==null)return sum;
+      const par=course?.par[holeIdx]||4;
+      let pts=0;
+      if(r.prox===myTeam)pts+=1;
+      if(gross<=par-1&&r.birdie===myTeam)pts+=1;
+      const teamNetArr=isTeamA?teamA.map(i=>r.net&&r.net[i]).filter(v=>v!=null):teamB.map(i=>r.net&&r.net[i]).filter(v=>v!=null);
+      const myNet=r.net?r.net[pi]:null;
+      if(myNet!=null&&teamNetArr.length&&myNet===Math.min(...teamNetArr)&&r.low===myTeam)pts+=2;
+      if(r.total===myTeam)pts+=2;
+      return sum+pts*r.multiplier;
+    },0);
+  }
+
+  // Per-player points per segment
+  function playerSegPts(pi,seg){
+    const start=seg*6;
+    return holeResults.slice(start,start+6).reduce((sum,r,si)=>{
+      const holeIdx=start+si;
+      const{a:teamA,b:teamB}=getTeamForSeg(seg);
+      const isTeamA=teamA.includes(pi);
+      const myTeam=isTeamA?'a':'b';
+      const gross=state.holes[holeIdx].scores[pi];
+      if(gross==null)return sum;
+      const par=course?.par[holeIdx]||4;
+      let pts=0;
+      if(r.prox===myTeam)pts+=1;
+      if(gross<=par-1&&r.birdie===myTeam)pts+=1;
+      const teamNetArr=isTeamA?teamA.map(i=>r.net&&r.net[i]).filter(v=>v!=null):teamB.map(i=>r.net&&r.net[i]).filter(v=>v!=null);
+      const myNet=r.net?r.net[pi]:null;
+      if(myNet!=null&&teamNetArr.length&&myNet===Math.min(...teamNetArr)&&r.low===myTeam)pts+=2;
+      if(r.total===myTeam)pts+=2;
+      return sum+pts*r.multiplier;
+    },0);
+  }
+
+  const allPlayerPts=state.players.map((_,pi)=>playerTotalPts(pi));
+  const maxPts=Math.max(...allPlayerPts,1);
+
+  // Ranked order
+  const ranked=[...state.players.map((_,i)=>i)].sort((a,b)=>allPlayerPts[b]-allPlayerPts[a]);
+
+  // Payout: player-to-player based on point differentials
+  // Each player settles with every other player: winner of pts diff gets paid
+  function payouts(){
+    const results=[];
+    for(let i=0;i<4;i++){
+      for(let j=i+1;j<4;j++){
+        const diff=allPlayerPts[i]-allPlayerPts[j];
+        if(diff===0)continue;
+        const winner=diff>0?i:j;
+        const loser=diff>0?j:i;
+        results.push({winner,loser,diff:Math.abs(diff),amt:(Math.abs(diff)*dollarsPerPt).toFixed(2)});
+      }
+    }
+    return results;
+  }
 
   function scoreCell(gross,par){
-    const diff=gross-par;
     if(!gross)return h('span',{style:{color:'var(--text3)'}},'—');
-    let cls='cell-par',extra='';
+    const diff=gross-par;
+    let cls='cell-par';
     if(diff<=-2)cls='cell-eagle';
     else if(diff===-1)cls='cell-birdie';
     else if(diff===1)cls='cell-bogey';
@@ -674,55 +726,61 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
     return h('span',{className:cls},gross);
   }
 
-  const segments=[0,1,2];
+  const playerGross=state.players.map((_,pi)=>{
+    const f9=state.holes.slice(0,9).reduce((s,h)=>s+(h.scores[pi]||0),0);
+    const b9=state.holes.slice(9).reduce((s,h)=>s+(h.scores[pi]||0),0);
+    return{f9,b9,total:f9+b9};
+  });
+
+  const anyScored=allPlayerPts.some(p=>p>0);
 
   return h('div',{className:'page'},
-    h('div',{className:'section-title'},'Points Standings'),
 
-    // Team A
-    ...['a','b'].map(t=>{
-      const seg=getSegment;
-      const pts=t==='a'?grandTotal.a:grandTotal.b;
-      const other=t==='a'?grandTotal.b:grandTotal.a;
-      const names=[0,1,2,3].filter(i=>{
-        // show who's on this team over the round (all 3 segs) — just list all 4
-        return true;
-      });
-      return h('div',{key:t,className:'lb-team-card',style:{borderColor:t==='a'?'rgba(59,130,246,0.3)':'rgba(245,158,11,0.3)'}},
+    // ── Individual Standings ──────────────────────────────────────
+    h('div',{className:'section-title'},'Points Standings'),
+    ...ranked.map((pi,rank)=>{
+      const pts=allPlayerPts[pi];
+      const col=playerColors[pi];
+      const pct=pts/maxPts*100;
+      return h('div',{key:pi,className:'lb-team-card',style:{borderColor:col.replace(')',',0.35)').replace('var(','rgba(').replace('--gold','212,168,67').replace('--',''),marginBottom:8}},
         h('div',{className:'lb-team-header'},
-          h('div',null,
-            h('div',{className:'lb-team-name',style:{color:t==='a'?'var(--blue)':'var(--amber)'}},`TEAM ${t.toUpperCase()}`),
-            h('div',{style:{fontSize:12,color:'var(--text2)',marginTop:2}},
-              segments.map(s=>{
-                const{a,b}=getTeamForSeg(s);
-                const myTeam=t==='a'?a:b;
-                return myTeam.map(i=>state.players[i].name).join(' & ');
-              }).join(' · ')
+          h('div',{style:{flex:1}},
+            h('div',{style:{display:'flex',alignItems:'center',gap:10,marginBottom:6}},
+              h('div',{style:{width:28,height:28,borderRadius:'50%',background:col,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:"'Bebas Neue',sans-serif",fontSize:14,color:'#0d1117',flexShrink:0}},rank+1),
+              h('div',{className:'lb-team-name',style:{color:col,fontSize:20}},state.players[pi].name),
+              h('div',{style:{fontSize:11,color:'var(--text3)',fontFamily:"'DM Mono',monospace",marginLeft:'auto'}},`HCP ${chcps[pi]}`)
+            ),
+            // Per-segment breakdown
+            h('div',{style:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5,marginBottom:8}},
+              [0,1,2].map(seg=>{
+                const{a:teamA,b:teamB}=getTeamForSeg(seg);
+                const partner=teamA.includes(pi)
+                  ?teamA.filter(i=>i!==pi).map(i=>state.players[i].name)[0]
+                  :teamB.filter(i=>i!==pi).map(i=>state.players[i].name)[0];
+                const sp=playerSegPts(pi,seg);
+                return h('div',{key:seg,style:{textAlign:'center',background:'var(--surface3)',borderRadius:6,padding:'6px 4px'}},
+                  h('div',{style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:col}},sp),
+                  h('div',{style:{fontSize:8,color:'var(--text3)',fontFamily:"'DM Mono',monospace",letterSpacing:'0.08em',marginTop:1}},['OPENER','NEAT','NIGHTCAP'][seg]),
+                  h('div',{style:{fontSize:9,color:'var(--text2)',marginTop:2}},`w/ ${partner}`)
+                );
+              })
+            ),
+            h('div',{className:'progress-track'},
+              h('div',{className:'progress-fill',style:{width:`${pct}%`,background:col}})
             )
           ),
-          h('div',null,
-            h('div',{className:'lb-pts-big',style:{color:t==='a'?'var(--blue)':'var(--amber)'}},pts),
-            h('div',{className:'lb-pts-label'},'points'),
+          h('div',{style:{textAlign:'right',paddingLeft:12}},
+            h('div',{className:'lb-pts-big',style:{color:col}},pts),
+            h('div',{className:'lb-pts-label'},'pts')
           )
-        ),
-        h('div',{style:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:6,marginBottom:8}},
-          segments.map(s=>{
-            const sp=t==='a'?segTotals[s].a:segTotals[s].b;
-            return h('div',{key:s,style:{textAlign:'center',background:'var(--surface3)',borderRadius:6,padding:'6px 4px'}},
-              h('div',{style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:t==='a'?'var(--blue)':'var(--amber)'}},sp),
-              h('div',{style:{fontSize:9,color:'var(--text3)',fontFamily:"'DM Mono',monospace",letterSpacing:'0.1em'}},['SEG 1','SEG 2','SEG 3'][s])
-            );
-          })
-        ),
-        h('div',{className:'progress-track'},
-          h('div',{className:'progress-fill',style:{width:`${(pts/Math.max(maxPts,1))*100}%`,background:t==='a'?'var(--blue)':'var(--amber)'}})
         )
       );
     }),
 
+    // ── Gross Scores ─────────────────────────────────────────────
     h('div',{className:'section-title'},'Gross Scores'),
     h('div',{style:{overflowX:'auto',borderRadius:8,border:'1px solid var(--border)'}},
-      h('table',{className:'gross-table',style:{minWidth:360}},
+      h('table',{className:'gross-table',style:{minWidth:340}},
         h('thead',null,
           h('tr',null,
             h('th',{style:{textAlign:'left',paddingLeft:10}},'Player'),
@@ -734,7 +792,7 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
             const g=playerGross[pi];
             const vpar=g.total-totalPar;
             return h('tr',{key:pi},
-              h('td',{style:{textAlign:'left',paddingLeft:10,fontWeight:500}},p.name),
+              h('td',{style:{textAlign:'left',paddingLeft:10,fontWeight:500,color:playerColors[pi]}},p.name),
               h('td',null,g.f9||'—'),
               h('td',null,g.b9||'—'),
               h('td',null,g.total||'—'),
@@ -745,6 +803,7 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
       )
     ),
 
+    // ── Payout Calculator ─────────────────────────────────────────
     h('div',{className:'section-title'},'Payout Calculator'),
     h('div',{className:'card'},
       h('div',{style:{display:'flex',alignItems:'center',gap:10,marginBottom:12}},
@@ -753,78 +812,78 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
           onChange:e=>setDollarsPerPt(parseFloat(e.target.value)||0)})
       ),
       h('div',{className:'divider'}),
-      grandTotal.a===0&&grandTotal.b===0
+      !anyScored
         ?h('div',{style:{color:'var(--text2)',fontSize:13,textAlign:'center',padding:'12px 0'}},'No points scored yet')
         :h('div',null,
-          h('div',{className:'payout-row'},
-            h('span',null,winner==='Tie'?'All Square':`Team ${winner} wins`),
-            h('span',{className:`payout-amount ${winner==='Tie'?'':netDiff>0?'earn':'owe'}`},
-              winner==='Tie'?'$0':(`$${dollarAmt.toFixed(2)}`)
+          payouts().length===0
+            ?h('div',{style:{color:'var(--text2)',fontSize:13,textAlign:'center',padding:'8px 0'}},'All square — no payments')
+            :payouts().map((p,idx)=>
+              h('div',{key:idx,className:'payout-row'},
+                h('span',{style:{fontSize:13}},
+                  h('span',{style:{color:playerColors[p.loser],fontWeight:600}},state.players[p.loser].name),
+                  h('span',{style:{color:'var(--text3)',margin:'0 6px'}},'→'),
+                  h('span',{style:{color:playerColors[p.winner],fontWeight:600}},state.players[p.winner].name),
+                  h('span',{style:{fontSize:11,color:'var(--text3)',marginLeft:6}},`(${p.diff} pts)`)
+                ),
+                h('span',{className:'payout-amount earn'},'$'+p.amt)
+              )
             )
-          ),
-          winner!=='Tie'&&h('div',{style:{fontSize:12,color:'var(--text2)',marginTop:8}},
-            `Team ${winner==='A'?'B':'A'} owes Team ${winner} $${dollarAmt.toFixed(2)}`+
-            ` (${Math.abs(netDiff)} pts × $${dollarsPerPt})`
-          )
         )
     ),
 
+    // ── Hole-by-Hole ──────────────────────────────────────────────
     h('div',{className:'section-title'},'Hole-by-Hole'),
     h('div',{style:{overflowX:'auto',borderRadius:8,border:'1px solid var(--border)'}},
       h('table',{className:'gross-table',style:{minWidth:420}},
         h('thead',null,
           h('tr',null,
-            h('th',null,'#'),
+            h('th',{style:{textAlign:'left',paddingLeft:6}},'#'),
             h('th',null,'Par'),
-            ...state.players.map((p,i)=>h('th',{key:i},p.name.split(' ')[0])),
-            h('th',null,'A'),h('th',null,'B'),h('th',null,'Mult'),
+            ...state.players.map((p,i)=>h('th',{key:i,style:{color:playerColors[i]}},p.name.split(' ')[0])),
+            h('th',null,'☂'),h('th',null,'×'),
           )
         ),
         h('tbody',null,
           Array.from({length:18},(_,i)=>{
             const r=holeResults[i];
             const par=course?.par[i]||4;
-            return h('tr',{key:i,style:{background:i===state.currentHole?'rgba(212,168,67,0.07)':''}},
-              h('td',null,i+1),
+            const seg=Math.floor(i/6);
+            return h('tr',{key:i,style:{background:i===state.currentHole?'rgba(212,168,67,0.07)':seg%2===1?'rgba(255,255,255,0.02)':''}},
+              h('td',{style:{textAlign:'left',paddingLeft:6,fontFamily:"'DM Mono',monospace",fontSize:11}},i+1),
               h('td',null,par),
               ...state.players.map((p,pi)=>h('td',{key:pi},scoreCell(state.holes[i].scores[pi],par))),
-              h('td',{style:{color:'var(--blue)',fontWeight:600}},r.pts.a||'—'),
-              h('td',{style:{color:'var(--amber)',fontWeight:600}},r.pts.b||'—'),
+              h('td',null,r.umbrella?h('span',{className:'badge badge-gold'},'12'):'—'),
               h('td',null,r.multiplier>1?h('span',{className:'badge badge-red'},`×${r.multiplier}`):'—'),
             );
           })
         ),
         h('tfoot',null,
           h('tr',{style:{borderTop:'2px solid var(--border2)'}},
-            h('td',{colSpan:2,style:{textAlign:'left',paddingLeft:10,fontWeight:600,fontFamily:"'DM Mono',monospace",fontSize:10}},
-              'TOTAL'
-            ),
+            h('td',{colSpan:2,style:{textAlign:'left',paddingLeft:6,fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:600}},'TOTAL'),
             ...state.players.map((_,pi)=>{
               const tot=state.holes.reduce((s,h)=>s+(h.scores[pi]||0),0);
-              return h('td',{key:pi,style:{fontWeight:600}},tot||'—');
+              return h('td',{key:pi,style:{fontWeight:600,color:playerColors[pi]}},tot||'—');
             }),
-            h('td',{style:{color:'var(--blue)',fontWeight:700}},grandTotal.a),
-            h('td',{style:{color:'var(--amber)',fontWeight:700}},grandTotal.b),
-            h('td',null,''),
+            h('td',{colSpan:2})
           )
         )
       )
     ),
 
-    // ─── Player Point Outcomes ───────────────────────────────────────
+    // ── Player Point Outcomes ─────────────────────────────────────
     h('div',{className:'section-title',style:{marginTop:20}},'Player Point Outcomes'),
     h('div',{style:{fontSize:12,color:'var(--text2)',marginBottom:10}},
-      'Points each player contributed to their team per hole. Color shows team for that segment.'
+      'Points each player earned per hole. Shading shows segment (Opener / Neat / Nightcap).'
     ),
     h('div',{style:{overflowX:'auto',borderRadius:8,border:'1px solid var(--border)'}},
       h('table',{className:'gross-table',style:{minWidth:500}},
         h('thead',null,
           h('tr',null,
-            h('th',{style:{textAlign:'left',paddingLeft:8,minWidth:32}},'#'),
-            h('th',{style:{minWidth:36}},'Par'),
-            ...state.players.map((p,i)=>h('th',{key:i,style:{minWidth:70}},p.name.split(' ')[0])),
-            h('th',{style:{minWidth:44}},'☂'),
-            h('th',{style:{minWidth:36}},'×'),
+            h('th',{style:{textAlign:'left',paddingLeft:6}},'#'),
+            h('th',null,'Par'),
+            ...state.players.map((p,i)=>h('th',{key:i,style:{color:playerColors[i]}},p.name.split(' ')[0])),
+            h('th',null,'☂'),
+            h('th',null,'×'),
           )
         ),
         h('tbody',null,
@@ -834,46 +893,35 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
             const seg=Math.floor(holeIdx/6);
             const{a:teamA,b:teamB}=getTeamForSeg(seg);
             const hasData=state.holes[holeIdx].scores.some(s=>s!=null);
-            // Build per-player earned points breakdown
             const playerPts=state.players.map((_,pi)=>{
               if(!hasData)return{pts:null,cats:[]};
               const isTeamA=teamA.includes(pi);
               const myTeam=isTeamA?'a':'b';
               const gross=state.holes[holeIdx].scores[pi];
               const net=gross!=null?gross-r.strokes[pi]:null;
-              let cats=[];
-              let pts=0;
-              // PROX
+              let cats=[],pts=0;
               if(r.prox===myTeam){cats.push('P');pts+=1;}
-              // BIRDIE — only the player who made the birdie gets credit
               if(gross!=null&&gross<=par-1&&r.birdie===myTeam){cats.push('B');pts+=1;}
-              // LOW NET — the player with the lowest net on the team gets credit
-              const teamNetScores=teamA.includes(pi)?
-                teamA.map(i=>r.net[i]).filter(v=>v!=null):
-                teamB.map(i=>r.net[i]).filter(v=>v!=null);
+              const teamNetScores=isTeamA?teamA.map(i=>r.net[i]).filter(v=>v!=null):teamB.map(i=>r.net[i]).filter(v=>v!=null);
               const myNet=net;
               const bestTeamNet=teamNetScores.length?Math.min(...teamNetScores):null;
               if(myNet!=null&&myNet===bestTeamNet&&r.low===myTeam){cats.push('L');pts+=2;}
-              // TOTAL — both players on winning team share credit
               if(r.total===myTeam){cats.push('T');pts+=2;}
-              // Apply multiplier
               const finalPts=pts*r.multiplier;
               return{pts:finalPts,cats,isTeamA};
             });
-            return h('tr',{key:holeIdx,style:{background:holeIdx===state.currentHole?'rgba(212,168,67,0.06)':''}},
-              h('td',{style:{textAlign:'left',paddingLeft:8,fontFamily:"'DM Mono',monospace",fontSize:11}},holeIdx+1),
+            return h('tr',{key:holeIdx,style:{background:seg%2===1?'rgba(255,255,255,0.02)':''}},
+              h('td',{style:{textAlign:'left',paddingLeft:6,fontFamily:"'DM Mono',monospace",fontSize:11}},holeIdx+1),
               h('td',null,par),
               ...playerPts.map((pp,pi)=>{
                 if(!hasData||pp.pts==null)return h('td',{key:pi,style:{color:'var(--text3)'}},'—');
-                const col=pp.isTeamA?'var(--blue)':'var(--amber)';
+                const col=playerColors[pi];
                 return h('td',{key:pi},
-                  h('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:2}},
+                  h('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:1}},
                     pp.pts>0
                       ?h('span',{style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:17,color:col,lineHeight:1}},pp.pts)
                       :h('span',{style:{color:'var(--text3)',fontSize:13}},'0'),
-                    pp.cats.length>0&&h('span',{style:{fontSize:8,color:col,opacity:0.7,letterSpacing:'0.05em',fontFamily:"'DM Mono',monospace"}},
-                      pp.cats.join(' ')
-                    )
+                    pp.cats.length>0&&h('span',{style:{fontSize:8,color:col,opacity:0.7,letterSpacing:'0.05em',fontFamily:"'DM Mono',monospace"}},pp.cats.join(' '))
                   )
                 );
               }),
@@ -884,29 +932,10 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
         ),
         h('tfoot',null,
           h('tr',{style:{borderTop:'2px solid var(--border2)'}},
-            h('td',{colSpan:2,style:{textAlign:'left',paddingLeft:8,fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:600}},'TOTAL'),
-            ...state.players.map((_,pi)=>{
-              // sum all points this player contributed
-              const tot=holeResults.reduce((sum,r,holeIdx)=>{
-                const seg=Math.floor(holeIdx/6);
-                const{a:teamA,b:teamB}=getTeamForSeg(seg);
-                const isTeamA=teamA.includes(pi);
-                const myTeam=isTeamA?'a':'b';
-                const gross=state.holes[holeIdx].scores[pi];
-                const net=r.net?r.net[pi]:null;
-                if(gross==null)return sum;
-                let pts=0;
-                const par=course?.par[holeIdx]||4;
-                if(r.prox===myTeam)pts+=1;
-                if(gross<=par-1&&r.birdie===myTeam)pts+=1;
-                const teamNetArr=isTeamA?teamA.map(i=>r.net&&r.net[i]).filter(v=>v!=null):teamB.map(i=>r.net&&r.net[i]).filter(v=>v!=null);
-                if(net!=null&&teamNetArr.length&&net===Math.min(...teamNetArr)&&r.low===myTeam)pts+=2;
-                if(r.total===myTeam)pts+=2;
-                return sum+pts*r.multiplier;
-              },0);
-              const isA=[0,1,2,3].some(s=>getTeamForSeg(Math.floor(0/6)).a.includes(pi));
-              return h('td',{key:pi,style:{fontWeight:700,fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:'var(--gold)'}},tot||'—');
-            }),
+            h('td',{colSpan:2,style:{textAlign:'left',paddingLeft:6,fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:600}},'TOTAL'),
+            ...state.players.map((_,pi)=>
+              h('td',{key:pi,style:{fontWeight:700,fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:playerColors[pi]}},allPlayerPts[pi]||'—')
+            ),
             h('td',{colSpan:2})
           )
         )
@@ -923,8 +952,7 @@ function SetupTab({state,setState,courses,course,tee,chcps,coursePar}){
     return{...s,players};
   });
 
-  const teamColors=['badge-blue','badge-blue','badge-gold','badge-gold'];
-  const teamLabels=['A','A','B','B'];
+  const playerColors=['var(--gold)','#4ade80','#f87171','#a78bfa'];
 
   return h('div',{className:'page'},
     h('div',{className:'section-title'},'Course & Tee'),
@@ -962,10 +990,10 @@ function SetupTab({state,setState,courses,course,tee,chcps,coursePar}){
 
     h('div',{className:'section-title'},'Players & Handicaps'),
     ...state.players.map((p,i)=>
-      h('div',{key:i,className:'player-setup-card'},
+      h('div',{key:i,className:'player-setup-card',style:{borderLeft:`3px solid ${playerColors[i]}`}},
         h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:10}},
-          h('span',{className:`badge ${teamColors[i]}`},`Team ${teamLabels[i]}`),
-          h('span',{style:{fontSize:12,color:'var(--text2)',fontFamily:"'DM Mono',monospace"}},'Player '+(i+1))
+          h('div',{style:{width:22,height:22,borderRadius:'50%',background:playerColors[i],display:'flex',alignItems:'center',justifyContent:'center',fontFamily:"'Bebas Neue',sans-serif",fontSize:12,color:'#0d1117',flexShrink:0}},i+1),
+          h('span',{style:{fontSize:13,fontWeight:600,color:playerColors[i]}},p.name||'Player '+(i+1))
         ),
         h('div',{style:{display:'grid',gridTemplateColumns:'1fr 100px',gap:8}},
           h('div',null,
@@ -981,7 +1009,7 @@ function SetupTab({state,setState,courses,course,tee,chcps,coursePar}){
         h('div',{style:{marginTop:8,display:'flex',gap:16,background:'var(--surface3)',borderRadius:6,padding:'8px 12px'}},
           h('div',null,
             h('div',{className:'label'},'Course HCP'),
-            h('div',{style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:'var(--gold)'}},
+            h('div',{style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:playerColors[i]}},
               isNaN(parseFloat(p.hi))?'—':chcps[i]
             )
           ),
@@ -995,17 +1023,24 @@ function SetupTab({state,setState,courses,course,tee,chcps,coursePar}){
       )
     ),
 
-    h('div',{className:'section-title'},'Team Rotation'),
+    h('div',{className:'section-title'},'Partnership Rotation'),
     h('div',{className:'card'},
-      h('div',{style:{fontSize:12,color:'var(--text2)',marginBottom:8}},'Six-Point Scotch rotates 2-man teams every 6 holes:'),
+      h('div',{style:{fontSize:12,color:'var(--text2)',marginBottom:12}},'Partners rotate every 6 holes — everyone plays with everyone:'),
       ...[0,1,2].map(seg=>{
         const{a,b}=getTeamForSeg(seg);
-        return h('div',{key:seg,style:{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0',borderBottom:seg<2?'1px solid var(--border)':'none'}},
-          h('span',{style:{fontSize:12,color:'var(--text3)',fontFamily:"'DM Mono',monospace"}},['Holes 1–6','Holes 7–12','Holes 13–18'][seg]),
-          h('span',{style:{fontSize:12}},
-            h('span',{style:{color:'var(--blue)'}},a.map(i=>state.players[i].name).join(' & ')),
-            h('span',{style:{color:'var(--text3)',margin:'0 6px'}},'vs'),
-            h('span',{style:{color:'var(--amber)'}},b.map(i=>state.players[i].name).join(' & ')),
+        const segCol=['var(--gold)','#4ade80','#f87171'][seg];
+        return h('div',{key:seg,style:{marginBottom:seg<2?12:0}},
+          h('div',{style:{fontSize:10,fontFamily:"'DM Mono',monospace",letterSpacing:'0.15em',color:segCol,marginBottom:5}},
+            ['THE OPENER','THE NEAT','THE NIGHTCAP'][seg]+' · HOLES '+(seg*6+1)+'–'+(seg*6+6)
+          ),
+          h('div',{style:{display:'flex',alignItems:'center',gap:8}},
+            h('div',{style:{flex:1,background:'var(--surface3)',borderRadius:6,padding:'8px 10px',display:'flex',gap:6,alignItems:'center'}},
+              ...a.map(i=>h('span',{key:i,style:{fontWeight:600,fontSize:13,color:playerColors[i]}},state.players[i].name)),
+            ),
+            h('div',{style:{color:'var(--text3)',fontSize:12,flexShrink:0}},'vs'),
+            h('div',{style:{flex:1,background:'var(--surface3)',borderRadius:6,padding:'8px 10px',display:'flex',gap:6,alignItems:'center'}},
+              ...b.map(i=>h('span',{key:i,style:{fontWeight:600,fontSize:13,color:playerColors[i]}},state.players[i].name)),
+            )
           )
         );
       })
