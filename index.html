@@ -367,7 +367,7 @@ function defaultState(){
       {name:'Player 3',hi:''},
       {name:'Player 4',hi:''},
     ],
-    holes:Array(18).fill(null).map(()=>({
+    holes:Array.from({length:18},()=>({
       scores:[null,null,null,null],
       prox:null,press:false,roll:false,reroll:false
     })),
@@ -461,6 +461,7 @@ function App(){
 
 // ─── SCORING TAB ─────────────────────────────────────────────────
 function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHoleComplete,setHole,updateHole,setScore}){
+  const [confirmReset,setConfirmReset]=useState(false);
   const hi=state.currentHole;
   const result=holeResults[hi];
   const holeData=state.holes[hi];
@@ -655,10 +656,26 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
 
     // Reset button
     h('div',{style:{marginTop:4}},
-      h('button',{
-        className:'btn btn-danger btn-sm',
-        onClick:()=>{if(confirm('Reset all scores? This cannot be undone.'))setState(s=>({...s,holes:defaultState().holes,currentHole:0}));}
-      },'Reset Round')
+      !confirmReset
+        ?h('button',{
+            className:'btn btn-danger btn-sm',
+            onClick:()=>setConfirmReset(true)
+          },'Reset Round')
+        :h('div',{style:{display:'flex',alignItems:'center',gap:8,background:'var(--red-dim)',border:'1px solid rgba(239,68,68,0.3)',borderRadius:8,padding:'10px 14px'}},
+            h('span',{style:{fontSize:13,color:'var(--red)',flex:1}},'Erase all scores?'),
+            h('button',{
+              className:'btn btn-sm',
+              style:{background:'var(--red)',color:'#fff',border:'none'},
+              onClick:()=>{
+                setState(s=>({...s,holes:Array.from({length:18},()=>({scores:[null,null,null,null],prox:null,press:false,roll:false,reroll:false})),currentHole:0}));
+                setConfirmReset(false);
+              }
+            },'Yes, Reset'),
+            h('button',{
+              className:'btn btn-ghost btn-sm',
+              onClick:()=>setConfirmReset(false)
+            },'Cancel')
+          )
     )
   );
 }
