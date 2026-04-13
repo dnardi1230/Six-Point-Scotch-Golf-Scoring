@@ -980,9 +980,45 @@ function SetupTab({state,setState,courses,course,tee,chcps,coursePar}){
     return{...s,players};
   });
 
+  const [confirmNew,setConfirmNew]=useState(false);
   const playerColors=['var(--gold)','#4ade80','#f87171','#a78bfa'];
 
+  function newRound(){
+    setState(s=>({
+      ...s,
+      holes:Array.from({length:18},()=>({scores:[null,null,null,null],prox:null,press:false,roll:false,reroll:false})),
+      currentHole:0,
+      tab:'scoring',
+    }));
+    setConfirmNew(false);
+  }
+
   return h('div',{className:'page'},
+
+    // ── New Round banner ─────────────────────────────────────────
+    !confirmNew
+      ?h('button',{
+          className:'btn btn-primary',
+          style:{width:'100%',marginBottom:16,fontSize:15,padding:'14px',letterSpacing:'0.04em'},
+          onClick:()=>setConfirmNew(true)
+        },'⛳  New Round')
+      :h('div',{style:{background:'var(--amber-dim)',border:'1px solid rgba(245,158,11,0.4)',borderRadius:10,padding:'14px 16px',marginBottom:16}},
+          h('div',{style:{fontSize:14,fontWeight:600,color:'var(--amber)',marginBottom:10}},'Start a new round? All scores will be cleared.'),
+          h('div',{style:{fontSize:12,color:'var(--text2)',marginBottom:12}},'Player names, handicaps and course settings are kept.'),
+          h('div',{style:{display:'flex',gap:8}},
+            h('button',{
+              className:'btn btn-primary',
+              style:{flex:1},
+              onClick:newRound
+            },'Yes, New Round'),
+            h('button',{
+              className:'btn btn-ghost',
+              style:{flex:1},
+              onClick:()=>setConfirmNew(false)
+            },'Cancel')
+          )
+        ),
+
     h('div',{className:'section-title'},'Course & Tee'),
     h('div',{className:'card'},
       h('div',{className:'col'},
