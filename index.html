@@ -20,6 +20,10 @@ body{font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-seri
   --border:rgba(255,255,255,0.08);--border2:rgba(255,255,255,0.14);
   --text1:#e8e0d5;--text2:#8b9aaa;--text3:#4d5a68;
   --r:10px;--r2:6px;
+  /* Segment accent colors */
+  --seg0:#d4a843;
+  --seg1:#4ade80;
+  --seg2:#f87171;
 }
 #root{height:100%;display:flex;flex-direction:column;overflow:hidden}
 
@@ -58,11 +62,25 @@ body{font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-seri
 /* ── Hole grid ── */
 .hole-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:5px;margin-bottom:10px}
 .hole-cell{aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:6px;font-family:'DM Mono',monospace;font-size:11px;font-weight:500;cursor:pointer;border:1.5px solid var(--border);background:var(--surface3);color:var(--text2);transition:all 0.15s;position:relative}
+/* Segment-tinted left border accents */
+.hole-cell.seg-0{border-left:3px solid var(--seg0)}
+.hole-cell.seg-1{border-left:3px solid var(--seg1)}
+.hole-cell.seg-2{border-left:3px solid var(--seg2)}
 .hole-cell.current{border-color:var(--gold);color:var(--gold)}
+.hole-cell.current.seg-0{border-left-color:var(--seg0)}
+.hole-cell.current.seg-1{border-left-color:var(--seg1)}
+.hole-cell.current.seg-2{border-left-color:var(--seg2)}
 .hole-cell.complete{background:rgba(34,197,94,0.12);border-color:rgba(34,197,94,0.35);color:var(--green)}
+.hole-cell.complete.seg-0{border-left-color:var(--seg0)}
+.hole-cell.complete.seg-1{border-left-color:var(--seg1)}
+.hole-cell.complete.seg-2{border-left-color:var(--seg2)}
 .hole-cell .hole-num{font-size:13px;font-weight:600}
 .hole-cell .hole-par{font-size:9px;opacity:0.7}
-.seg-label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;text-transform:uppercase;color:var(--text3);text-align:center;margin-bottom:4px}
+
+/* Segment legend (replaces misaligned 3-col labels) */
+.seg-legend{display:flex;justify-content:center;gap:14px;margin-bottom:8px;flex-wrap:wrap}
+.seg-chip{display:inline-flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text2)}
+.seg-chip-dot{width:8px;height:8px;border-radius:2px;flex-shrink:0}
 
 /* ── Score entry ── */
 .score-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
@@ -75,6 +93,7 @@ body{font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-seri
 .step-btn{width:36px;height:36px;background:none;border:none;color:var(--text1);font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-weight:300;transition:background 0.15s}
 .step-btn:active{background:var(--border)}
 .step-val{flex:1;text-align:center;font-family:'Bebas Neue',sans-serif;font-size:26px;letter-spacing:0.05em;min-width:40px;color:var(--text1)}
+.step-val.placeholder{color:var(--text3);opacity:0.6}
 .net-badge{font-family:'DM Mono',monospace;font-size:10px;padding:2px 6px;border-radius:4px;background:var(--surface);color:var(--text2);align-self:flex-start}
 
 /* ── Points row ── */
@@ -230,6 +249,36 @@ const TEAM_COLORS=['team-a','team-b'];
 // Seg 1 (7-12):  P0+P2 vs P1+P3
 // Seg 2 (13-18): P0+P3 vs P1+P2
 const SEG_TEAMS=[[0,1],[0,2],[0,3]];
+
+// Player color per index — used for both the leaderboard and the
+// segment-card border colors. Kept as a single shared list so the
+// rgba-conversion helper can handle every entry uniformly.
+const PLAYER_COLORS=['#d4a843','#4ade80','#f87171','#a78bfa'];
+
+// Convert any color string ('#rrggbb', 'var(--gold)', or 'rgb(...)') into
+// an `rgba(r,g,b,alpha)` string. Returns null if it can't parse.
+function colorToRgba(col,alpha){
+  if(!col)return null;
+  // CSS variable → look up known mapping
+  if(col.startsWith('var(')){
+    const name=col.slice(4,-1).replace('--','').trim();
+    const map={gold:'212,168,67',green:'74,222,128',red:'248,113,113'};
+    const v=map[name];
+    if(!v)return null;
+    return `rgba(${v},${alpha})`;
+  }
+  // hex
+  if(col.startsWith('#')){
+    let s=col.slice(1);
+    if(s.length===3)s=s.split('').map(c=>c+c).join('');
+    if(s.length!==6)return null;
+    const r=parseInt(s.slice(0,2),16);
+    const g=parseInt(s.slice(2,4),16);
+    const b=parseInt(s.slice(4,6),16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+  return null;
+}
 
 // ─── STORAGE ──────────────────────────────────────────────────────
 const SK='sps_v3';
@@ -434,9 +483,13 @@ function App(){
     return{...s,holes};
   });
 
+  // A hole is "complete" once every player has entered a gross score.
+  // PROX is optional — some holes (e.g. par 5s where no one is on in regulation)
+  // simply have no closest-to-pin awarded, and that shouldn't block the
+  // hole from being marked complete or showing its points.
   const isHoleComplete=i=>{
     const h=state.holes[i];
-    return h&&h.scores.every(s=>s!=null)&&h.prox!=null;
+    return h&&h.scores.every(s=>s!=null);
   };
 
   const tabs=[
@@ -480,36 +533,51 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
     ...teamB.filter(pi=>state.players[pi]).map(pi=>({val:String(pi),label:state.players[pi].name||'Player '+(pi+1)})),
   ];
 
+  // Order the score boxes so partners sit side-by-side:
+  // top row = Team A, bottom row = Team B
+  const scoreBoxOrder=[teamA[0],teamA[1],teamB[0],teamB[1]];
+
+  // Score stepper helper:
+  // - First tap on +/- when no score is entered yet → start at par
+  // - Subsequent taps adjust from current value
+  const stepScore=(holeIdx,playerIdx,delta,gross,parVal)=>{
+    if(gross==null)return setScore(holeIdx,playerIdx,parVal);
+    return setScore(holeIdx,playerIdx,Math.max(1,gross+delta));
+  };
+
   // Segment recap holes
   const segStart=seg*6, segEnd=segStart+6;
   const segHoles=Array.from({length:6},(_,i)=>segStart+i);
 
   return h('div',{className:'page'},
-    // Hole grid
+    // Hole grid with segment-color legend
     h('div',null,
-      h('div',{style:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'4px',marginBottom:'4px'}},
-        [0,1,2].map(s=>{
-          const sl=['The Opener','The Neat','The Nightcap'][s];
-          return h('div',{key:s,className:'seg-label'},sl);
-        })
+      h('div',{className:'seg-legend'},
+        ['The Opener','The Neat','The Nightcap'].map((lbl,si)=>
+          h('span',{key:si,className:'seg-chip'},
+            h('span',{className:'seg-chip-dot',style:{background:`var(--seg${si})`}}),
+            lbl
+          )
+        )
       ),
       h('div',{className:'hole-grid'},
-        Array.from({length:18},(_,i)=>
-          h('div',{
+        Array.from({length:18},(_,i)=>{
+          const s=getSegment(i+1);
+          return h('div',{
             key:i,
-            className:`hole-cell${i===hi?' current':''}${isHoleComplete(i)?' complete':''}`,
+            className:`hole-cell seg-${s}${i===hi?' current':''}${isHoleComplete(i)?' complete':''}`,
             onClick:()=>setHole(i)
           },
             h('div',{className:'hole-num'},i+1),
             h('div',{className:'hole-par'},'P'+(course?.par[i]||4))
-          )
-        )
+          );
+        })
       ),
     ),
 
     // Current segment info
     h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'8px',marginTop:'4px'}},
-      h('span',{style:{fontSize:12,color:'var(--text2)',fontFamily:"'DM Mono',monospace"}},segLabel),
+      h('span',{style:{fontSize:12,color:`var(--seg${seg})`,fontFamily:"'DM Mono',monospace",fontWeight:600,letterSpacing:'0.08em'}},segLabel),
       h('span',{style:{fontSize:12,fontFamily:"'DM Mono',monospace",color:'var(--text2)'}},
         `${teamANames} vs ${teamBNames}`
       )
@@ -522,9 +590,9 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
       h('button',{className:'btn btn-ghost btn-icon',onClick:()=>hi<17&&setHole(hi+1),disabled:hi===17},'▶'),
     ),
 
-    // Score entry
+    // Score entry — partners sit side-by-side (Team A on top, Team B below)
     h('div',{className:'score-grid',style:{marginBottom:10}},
-      [0,1,2,3].map(pi=>{
+      scoreBoxOrder.map(pi=>{
         const isA=teamA.includes(pi);
         const gross=holeData.scores[pi];
         const net=gross!=null?gross-strokes[pi]:null;
@@ -539,9 +607,9 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
             `HCP ${chcps[pi]} · +${strokes[pi]} stroke${strokes[pi]!==1?'s':''}`
           ),
           h('div',{className:'score-stepper'},
-            h('button',{className:'step-btn',onClick:()=>setScore(hi,pi,Math.max(1,(gross||par)-1))},'−'),
-            h('div',{className:'step-val'},gross??'—'),
-            h('button',{className:'step-btn',onClick:()=>setScore(hi,pi,(gross||par)+1)},'+'),
+            h('button',{className:'step-btn',onClick:()=>stepScore(hi,pi,-1,gross,par)},'−'),
+            h('div',{className:`step-val${gross==null?' placeholder':''}`},gross??par),
+            h('button',{className:'step-btn',onClick:()=>stepScore(hi,pi,+1,gross,par)},'+'),
           ),
           net!=null&&h('div',{className:'net-badge'},`Net ${net}`)
         );
@@ -558,19 +626,22 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
         {key:'mult',label:'MULT',special:'mult'},
         {key:'umbrella',label:'☂',special:'umbrella'},
       ].map(item=>{
-        let display='—', cls='na';
+        let display='—', cls='na', valSize=20;
         if(item.special==='prox'){
           const proxPi=result.proxPlayerIdx;
           if(proxPi!=null&&state.players[proxPi]){
             display=state.players[proxPi].name.split(' ')[0];
             cls='awarded';
+            valSize=12;
           }
         } else if(item.special==='mult'){
           display=`×${result.multiplier}`;
           cls=result.multiplier>1?'awarded':'na';
+          valSize=18;
         } else if(item.special==='umbrella'){
           display=result.umbrella?'YES':'NO';
           cls=result.umbrella?'umbrella':'na';
+          valSize=16;
         } else if(item.val==='a'){
           display=`A+${item.pts}`;cls='awarded';
         } else if(item.val==='b'){
@@ -578,7 +649,7 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
         }
         return h('div',{key:item.key,className:'pt-box'},
           h('span',{className:'pt-label'},item.label),
-          h('div',{className:`pt-val ${cls}`,style:{fontSize:item.special==='prox'&&result.proxPlayerIdx!=null&&state.players[result.proxPlayerIdx]?12:item.special?14:16}},display)
+          h('div',{className:`pt-val ${cls}`,style:{fontSize:valSize}},display)
         );
       })
     ),
@@ -640,14 +711,17 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
         segHoles.map(i=>{
           const r=holeResults[i];
           const complete=isHoleComplete(i);
+          // When umbrella fires, the team's pts already include the ☂ value
+          // (e.g. 12 with mult=1, or 24 with ×2). We show a small umbrella
+          // marker rather than a separate "12" badge so it's not duplicative.
           return h('div',{key:i,className:'recap-row'},
             h('span',{className:'recap-hole'},`Hole ${i+1}  ·  Par ${course?.par[i]||'?'}`),
             h('span',{style:{display:'flex',gap:8,alignItems:'center'}},
               complete?h('span',{className:'recap-pts',style:{color:'var(--blue)'}},`A:${r.pts.a}`):null,
               complete?h('span',{className:'recap-pts',style:{color:'var(--amber)'}},`B:${r.pts.b}`):null,
               r.multiplier>1&&complete?h('span',{className:'badge badge-red'},`×${r.multiplier}`):null,
-              r.umbrella&&complete?h('span',{className:'badge badge-gold'},'☂12'):null,
-              !complete&&h('span',{style:{fontSize:11,color:'var(--text3)'}},isHoleComplete(i)?'✓':'—')
+              r.umbrella&&complete?h('span',{title:'Umbrella',style:{fontSize:14}},'☂'):null,
+              !complete&&h('span',{style:{fontSize:11,color:'var(--text3)'}},'—')
             )
           );
         })
@@ -690,10 +764,23 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
   const totalPar=f9par+b9par;
 
   const segNames=['The Opener','The Neat','The Nightcap'];
-  const playerColors=['var(--gold)','#4ade80','#f87171','#a78bfa'];
+  // Use the shared PLAYER_COLORS list so leaderboard and setup tabs match.
+  const playerColors=PLAYER_COLORS;
 
-  // Per-player points total across all holes
-  // Both players on a team receive the same points — team points from holeResults
+  // Per-hole net from a player's perspective: (their team's pts) − (opp team's pts).
+  // Positive when their team won the hole, negative when they lost, 0 on ties or
+  // holes with no score entered for that player.
+  function playerHoleNet(pi,holeIdx){
+    if(state.holes[holeIdx].scores[pi]==null)return 0;
+    const r=holeResults[holeIdx];
+    const seg=Math.floor(holeIdx/6);
+    const{a:teamA}=getTeamForSeg(seg);
+    const isTeamA=teamA.includes(pi);
+    return isTeamA?(r.pts.a-r.pts.b):(r.pts.b-r.pts.a);
+  }
+
+  // Per-player gross points total across all holes
+  // Both players on a team receive the same gross points — team points from holeResults
   function playerTotalPts(pi){
     return holeResults.reduce((sum,r,holeIdx)=>{
       const seg=Math.floor(holeIdx/6);
@@ -705,7 +792,7 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
     },0);
   }
 
-  // Per-player points per segment — teammates always get the same pts
+  // Per-player gross points per segment — teammates always get the same pts
   function playerSegPts(pi,seg){
     const start=seg*6;
     return holeResults.slice(start,start+6).reduce((sum,r,si)=>{
@@ -717,26 +804,56 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
     },0);
   }
 
+  // Per-player net total across all holes (sum of per-hole margins)
+  function playerTotalNet(pi){
+    let sum=0;
+    for(let i=0;i<18;i++)sum+=playerHoleNet(pi,i);
+    return sum;
+  }
+
+  // Per-player net per segment
+  function playerSegNet(pi,seg){
+    const start=seg*6;
+    let sum=0;
+    for(let i=start;i<start+6;i++)sum+=playerHoleNet(pi,i);
+    return sum;
+  }
+
   const allPlayerPts=state.players.map((_,pi)=>playerTotalPts(pi));
+  const allPlayerNets=state.players.map((_,pi)=>playerTotalNet(pi));
   const maxPts=Math.max(...allPlayerPts,1);
 
-  // Ranked order
-  const ranked=[...state.players.map((_,i)=>i)].sort((a,b)=>allPlayerPts[b]-allPlayerPts[a]);
+  // Ranked order — by NET, since that's what determines payouts now.
+  const ranked=[...state.players.map((_,i)=>i)].sort((a,b)=>allPlayerNets[b]-allPlayerNets[a]);
 
-  // Payout: player-to-player based on point differentials
-  // Each player settles with every other player: winner of pts diff gets paid
-  function payouts(){
-    const results=[];
-    for(let i=0;i<4;i++){
-      for(let j=i+1;j<4;j++){
-        const diff=allPlayerPts[i]-allPlayerPts[j];
-        if(diff===0)continue;
-        const winner=diff>0?i:j;
-        const loser=diff>0?j:i;
-        results.push({winner,loser,diff:Math.abs(diff),amt:(Math.abs(diff)*dollarsPerPt).toFixed(2)});
+  // Minimum-transaction settlement.
+  // Each player's net is already in points (sums to zero). Greedy match the
+  // largest creditor (positive net) against the largest debtor (negative net),
+  // settle by min(creditor, |debtor|), and repeat. With 4 players this produces
+  // at most 3 transactions and is always optimal because a 0-sum vector of
+  // 4 values can never need more than n−1 edges to clear.
+  function settlePayments(){
+    // Work in points so we can show both points-owed and dollars-owed.
+    const creditors=[],debtors=[];
+    allPlayerNets.forEach((n,pi)=>{
+      if(n>0)creditors.push({pi,amt:n});
+      else if(n<0)debtors.push({pi,amt:-n});
+    });
+    creditors.sort((a,b)=>b.amt-a.amt);
+    debtors.sort((a,b)=>b.amt-a.amt);
+    const txs=[];
+    let ci=0,di=0;
+    while(ci<creditors.length&&di<debtors.length){
+      const c=creditors[ci],d=debtors[di];
+      const pay=Math.min(c.amt,d.amt);
+      if(pay>0){
+        txs.push({from:d.pi,to:c.pi,points:pay,dollars:pay*dollarsPerPt});
       }
+      c.amt-=pay; d.amt-=pay;
+      if(c.amt===0)ci++;
+      if(d.amt===0)di++;
     }
-    return results;
+    return txs;
   }
 
   function scoreCell(gross,par){
@@ -759,47 +876,6 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
   const anyScored=allPlayerPts.some(p=>p>0);
 
   return h('div',{className:'page'},
-
-    // ── Individual Standings ──────────────────────────────────────
-    h('div',{className:'section-title'},'Points Standings'),
-    ...ranked.map((pi,rank)=>{
-      const pts=allPlayerPts[pi];
-      const col=playerColors[pi];
-      const pct=pts/maxPts*100;
-      return h('div',{key:pi,className:'lb-team-card',style:{borderColor:col.replace(')',',0.35)').replace('var(','rgba(').replace('--gold','212,168,67').replace('--',''),marginBottom:8}},
-        h('div',{className:'lb-team-header'},
-          h('div',{style:{flex:1}},
-            h('div',{style:{display:'flex',alignItems:'center',gap:10,marginBottom:6}},
-              h('div',{style:{width:28,height:28,borderRadius:'50%',background:col,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:"'Bebas Neue',sans-serif",fontSize:14,color:'#0d1117',flexShrink:0}},rank+1),
-              h('div',{className:'lb-team-name',style:{color:col,fontSize:20}},state.players[pi].name),
-              h('div',{style:{fontSize:11,color:'var(--text3)',fontFamily:"'DM Mono',monospace",marginLeft:'auto'}},`HCP ${chcps[pi]}`)
-            ),
-            // Per-segment breakdown
-            h('div',{style:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5,marginBottom:8}},
-              [0,1,2].map(seg=>{
-                const{a:teamA,b:teamB}=getTeamForSeg(seg);
-                const partner=teamA.includes(pi)
-                  ?teamA.filter(i=>i!==pi).map(i=>state.players[i].name)[0]
-                  :teamB.filter(i=>i!==pi).map(i=>state.players[i].name)[0];
-                const sp=playerSegPts(pi,seg);
-                return h('div',{key:seg,style:{textAlign:'center',background:'var(--surface3)',borderRadius:6,padding:'6px 4px'}},
-                  h('div',{style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:col}},sp),
-                  h('div',{style:{fontSize:8,color:'var(--text3)',fontFamily:"'DM Mono',monospace",letterSpacing:'0.08em',marginTop:1}},['OPENER','NEAT','NIGHTCAP'][seg]),
-                  h('div',{style:{fontSize:9,color:'var(--text2)',marginTop:2}},`w/ ${partner}`)
-                );
-              })
-            ),
-            h('div',{className:'progress-track'},
-              h('div',{className:'progress-fill',style:{width:`${pct}%`,background:col}})
-            )
-          ),
-          h('div',{style:{textAlign:'right',paddingLeft:12}},
-            h('div',{className:'lb-pts-big',style:{color:col}},pts),
-            h('div',{className:'lb-pts-label'},'pts')
-          )
-        )
-      );
-    }),
 
     // ── Gross Scores ─────────────────────────────────────────────
     h('div',{className:'section-title'},'Gross Scores'),
@@ -827,6 +903,60 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
       )
     ),
 
+    // ── Individual Standings ──────────────────────────────────────
+    h('div',{className:'section-title'},'Points Standings'),
+    ...ranked.map((pi,rank)=>{
+      const pts=allPlayerPts[pi];
+      const net=allPlayerNets[pi];
+      const col=playerColors[pi];
+      // Progress bar based on absolute net vs the largest absolute net in the field
+      const maxAbsNet=Math.max(...allPlayerNets.map(n=>Math.abs(n)),1);
+      const pct=Math.abs(net)/maxAbsNet*100;
+      const netCol=net>0?'var(--green)':net<0?'var(--red)':'var(--text2)';
+      // Use the colorToRgba helper so this works for every player color,
+      // not just the gold/CSS-variable case the original replace-chain handled.
+      const borderCol=colorToRgba(col,0.35)||'var(--border)';
+      return h('div',{key:pi,className:'lb-team-card',style:{borderColor:borderCol,marginBottom:8}},
+        h('div',{className:'lb-team-header'},
+          h('div',{style:{flex:1}},
+            h('div',{style:{display:'flex',alignItems:'center',gap:10,marginBottom:6}},
+              h('div',{style:{width:28,height:28,borderRadius:'50%',background:col,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:"'Bebas Neue',sans-serif",fontSize:14,color:'#0d1117',flexShrink:0}},rank+1),
+              h('div',{className:'lb-team-name',style:{color:col,fontSize:20}},state.players[pi].name),
+              h('div',{style:{fontSize:11,color:'var(--text3)',fontFamily:"'DM Mono',monospace",marginLeft:'auto'}},`HCP ${chcps[pi]}`)
+            ),
+            // Per-segment breakdown — shows both gross and net so the
+            // running team-pts column is still visible alongside what
+            // actually drives the payout.
+            h('div',{style:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5,marginBottom:8}},
+              [0,1,2].map(seg=>{
+                const{a:teamA,b:teamB}=getTeamForSeg(seg);
+                const partner=teamA.includes(pi)
+                  ?teamA.filter(i=>i!==pi).map(i=>state.players[i].name)[0]
+                  :teamB.filter(i=>i!==pi).map(i=>state.players[i].name)[0];
+                const sp=playerSegPts(pi,seg);
+                const sn=playerSegNet(pi,seg);
+                const snCol=sn>0?'var(--green)':sn<0?'var(--red)':'var(--text2)';
+                return h('div',{key:seg,style:{textAlign:'center',background:'var(--surface3)',borderRadius:6,padding:'6px 4px'}},
+                  h('div',{style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:snCol,lineHeight:1}},
+                    (sn>0?'+':'')+sn),
+                  h('div',{style:{fontSize:9,color:'var(--text3)',marginTop:1}},`(${sp} pts)`),
+                  h('div',{style:{fontSize:8,color:'var(--text3)',fontFamily:"'DM Mono',monospace",letterSpacing:'0.08em',marginTop:3}},['OPENER','NEAT','NIGHTCAP'][seg]),
+                  h('div',{style:{fontSize:9,color:'var(--text2)',marginTop:2}},`w/ ${partner}`)
+                );
+              })
+            ),
+            h('div',{className:'progress-track'},
+              h('div',{className:'progress-fill',style:{width:`${pct}%`,background:netCol}})
+            )
+          ),
+          h('div',{style:{textAlign:'right',paddingLeft:12}},
+            h('div',{className:'lb-pts-big',style:{color:netCol}},(net>0?'+':'')+net),
+            h('div',{className:'lb-pts-label'},`net · ${pts} pts`)
+          )
+        )
+      );
+    }),
+
     // ── Payout Calculator ─────────────────────────────────────────
     h('div',{className:'section-title'},'Payout Calculator'),
     h('div',{className:'card'},
@@ -836,23 +966,39 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
           onChange:e=>setDollarsPerPt(parseFloat(e.target.value)||0)})
       ),
       h('div',{className:'divider'}),
+      // Net summary row — shows each player's net before the settlement
+      h('div',{style:{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:6,marginBottom:14}},
+        state.players.map((p,pi)=>{
+          const net=allPlayerNets[pi];
+          const netCol=net>0?'var(--green)':net<0?'var(--red)':'var(--text2)';
+          return h('div',{key:pi,style:{background:'var(--surface3)',borderRadius:6,padding:'8px 10px',display:'flex',justifyContent:'space-between',alignItems:'baseline'}},
+            h('span',{style:{fontSize:12,color:playerColors[pi],fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'60%'}},p.name),
+            h('span',{style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:netCol}},(net>0?'+':'')+net)
+          );
+        })
+      ),
       !anyScored
         ?h('div',{style:{color:'var(--text2)',fontSize:13,textAlign:'center',padding:'12px 0'}},'No points scored yet')
-        :h('div',null,
-          payouts().length===0
-            ?h('div',{style:{color:'var(--text2)',fontSize:13,textAlign:'center',padding:'8px 0'}},'All square — no payments')
-            :payouts().map((p,idx)=>
+        :(()=>{
+          const txs=settlePayments();
+          if(txs.length===0)return h('div',{style:{color:'var(--text2)',fontSize:13,textAlign:'center',padding:'8px 0'}},'All square — no payments');
+          return h('div',null,
+            h('div',{style:{fontSize:11,fontFamily:"'DM Mono',monospace",letterSpacing:'0.1em',color:'var(--text3)',marginBottom:6,textTransform:'uppercase'}},'Settlement'),
+            ...txs.map((t,idx)=>
               h('div',{key:idx,className:'payout-row'},
-                h('span',{style:{fontSize:13}},
-                  h('span',{style:{color:playerColors[p.loser],fontWeight:600}},state.players[p.loser].name),
-                  h('span',{style:{color:'var(--text3)',margin:'0 6px'}},'→'),
-                  h('span',{style:{color:playerColors[p.winner],fontWeight:600}},state.players[p.winner].name),
-                  h('span',{style:{fontSize:11,color:'var(--text3)',marginLeft:6}},`(${p.diff} pts)`)
+                h('span',{style:{fontSize:13,display:'flex',alignItems:'baseline',gap:6,flexWrap:'wrap'}},
+                  h('span',{style:{color:playerColors[t.from],fontWeight:600}},state.players[t.from].name),
+                  h('span',{style:{color:'var(--text3)'}},'pays'),
+                  h('span',{style:{color:playerColors[t.to],fontWeight:600}},state.players[t.to].name),
+                  h('span',{style:{fontSize:11,color:'var(--text3)',fontFamily:"'DM Mono',monospace"}},`(${t.points} pts)`)
                 ),
-                h('span',{className:'payout-amount earn'},'$'+p.amt)
+                h('span',{className:'payout-amount earn'},'$'+t.dollars.toFixed(2))
               )
-            )
-        )
+            ),
+            h('div',{style:{fontSize:11,color:'var(--text3)',marginTop:10,textAlign:'center',fontStyle:'italic'}},
+              `Settled in ${txs.length} payment${txs.length===1?'':'s'}.`)
+          );
+        })()
     ),
 
     // ── Hole-by-Hole ──────────────────────────────────────────────
@@ -876,7 +1022,7 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
               h('td',{style:{textAlign:'left',paddingLeft:6,fontFamily:"'DM Mono',monospace",fontSize:11}},i+1),
               h('td',null,par),
               ...state.players.map((p,pi)=>h('td',{key:pi},scoreCell(state.holes[i].scores[pi],par))),
-              h('td',null,r.umbrella?h('span',{className:'badge badge-gold'},'12'):'—'),
+              h('td',null,r.umbrella?h('span',{className:'badge badge-gold'},'☂'):'—'),
               h('td',null,r.multiplier>1?h('span',{className:'badge badge-red'},`×${r.multiplier}`):'—'),
             );
           })
@@ -888,82 +1034,6 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
               const tot=state.holes.reduce((s,h)=>s+(h.scores[pi]||0),0);
               return h('td',{key:pi,style:{fontWeight:600,color:playerColors[pi]}},tot||'—');
             }),
-            h('td',{colSpan:2})
-          )
-        )
-      )
-    ),
-
-    // ── Player Point Outcomes ─────────────────────────────────────
-    h('div',{className:'section-title',style:{marginTop:20}},'Player Point Outcomes'),
-    h('div',{style:{fontSize:12,color:'var(--text2)',marginBottom:10}},
-      'Points each player earned per hole. Shading shows segment (Opener / Neat / Nightcap).'
-    ),
-    h('div',{style:{overflowX:'auto',borderRadius:8,border:'1px solid var(--border)'}},
-      h('table',{className:'gross-table',style:{minWidth:500}},
-        h('thead',null,
-          h('tr',null,
-            h('th',{style:{textAlign:'left',paddingLeft:6}},'#'),
-            h('th',null,'Par'),
-            ...state.players.map((p,i)=>h('th',{key:i,style:{color:playerColors[i]}},p.name.split(' ')[0])),
-            h('th',null,'☂'),
-            h('th',null,'×'),
-          )
-        ),
-        h('tbody',null,
-          Array.from({length:18},(_,holeIdx)=>{
-            const r=holeResults[holeIdx];
-            const par=course?.par[holeIdx]||4;
-            const seg=Math.floor(holeIdx/6);
-            const{a:teamA,b:teamB}=getTeamForSeg(seg);
-            const hasData=state.holes[holeIdx].scores.some(s=>s!=null);
-            const playerPts=state.players.map((_,pi)=>{
-              if(!hasData)return{pts:null,cats:[]};
-              const isTeamA=teamA.includes(pi);
-              const myTeam=isTeamA?'a':'b';
-              if(state.holes[holeIdx].scores[pi]==null)return{pts:null,cats:[],isTeamA};
-              let cats=[],pts=0;
-              // PRX — only the specific player selected as closest to pin
-              if(r.proxPlayerIdx!=null&&r.proxPlayerIdx===pi&&state.players[pi]){cats.push('PRX');pts+=1;}
-              // BRD — only players who personally made a natural birdie on winning team
-              const gross=state.holes[holeIdx].scores[pi];
-              if(gross!=null&&gross<=par-1&&r.birdie===myTeam){cats.push('BRD');pts+=1;}
-              // LOW — only the player with the best net on the winning team
-              if(r.low===myTeam&&r.net&&r.net[pi]!=null){
-                const teamNets=isTeamA?teamA.map(i=>r.net[i]).filter(v=>v!=null):teamB.map(i=>r.net[i]).filter(v=>v!=null);
-                if(r.net[pi]===Math.min(...teamNets)){cats.push('LOW');pts+=2;}
-              }
-              // TOT — both players on winning team share this
-              if(r.total===myTeam){cats.push('TOT');pts+=2;}
-              const finalPts=pts*r.multiplier;
-              return{pts:finalPts,cats,isTeamA};
-            });
-            return h('tr',{key:holeIdx,style:{background:seg%2===1?'rgba(255,255,255,0.02)':''}},
-              h('td',{style:{textAlign:'left',paddingLeft:6,fontFamily:"'DM Mono',monospace",fontSize:11}},holeIdx+1),
-              h('td',null,par),
-              ...playerPts.map((pp,pi)=>{
-                if(!hasData||pp.pts==null)return h('td',{key:pi,style:{color:'var(--text3)'}},'—');
-                const col=playerColors[pi];
-                return h('td',{key:pi},
-                  h('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:1}},
-                    pp.pts>0
-                      ?h('span',{style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:17,color:col,lineHeight:1}},pp.pts)
-                      :h('span',{style:{color:'var(--text3)',fontSize:13}},'0'),
-                    pp.cats.length>0&&h('span',{style:{fontSize:8,color:col,opacity:0.7,letterSpacing:'0.05em',fontFamily:"'DM Mono',monospace"}},pp.cats.join(' '))
-                  )
-                );
-              }),
-              h('td',null,r.umbrella?h('span',{className:'badge badge-gold'},'12'):'—'),
-              h('td',null,r.multiplier>1?h('span',{className:'badge badge-red'},`×${r.multiplier}`):'—'),
-            );
-          })
-        ),
-        h('tfoot',null,
-          h('tr',{style:{borderTop:'2px solid var(--border2)'}},
-            h('td',{colSpan:2,style:{textAlign:'left',paddingLeft:6,fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:600}},'TOTAL'),
-            ...state.players.map((_,pi)=>
-              h('td',{key:pi,style:{fontWeight:700,fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:playerColors[pi]}},allPlayerPts[pi]||'—')
-            ),
             h('td',{colSpan:2})
           )
         )
@@ -981,11 +1051,17 @@ function SetupTab({state,setState,courses,course,tee,chcps,coursePar}){
   });
 
   const [confirmNew,setConfirmNew]=useState(false);
-  const playerColors=['var(--gold)','#4ade80','#f87171','#a78bfa'];
+  const playerColors=PLAYER_COLORS;
 
   function newRound(){
     setState(s=>({
       ...s,
+      players:[
+        {name:'Player 1',hi:''},
+        {name:'Player 2',hi:''},
+        {name:'Player 3',hi:''},
+        {name:'Player 4',hi:''},
+      ],
       holes:Array.from({length:18},()=>({scores:[null,null,null,null],prox:null,press:false,roll:false,reroll:false})),
       currentHole:0,
       tab:'scoring',
@@ -1003,8 +1079,8 @@ function SetupTab({state,setState,courses,course,tee,chcps,coursePar}){
           onClick:()=>setConfirmNew(true)
         },'⛳  New Round')
       :h('div',{style:{background:'var(--amber-dim)',border:'1px solid rgba(245,158,11,0.4)',borderRadius:10,padding:'14px 16px',marginBottom:16}},
-          h('div',{style:{fontSize:14,fontWeight:600,color:'var(--amber)',marginBottom:10}},'Start a new round? All scores will be cleared.'),
-          h('div',{style:{fontSize:12,color:'var(--text2)',marginBottom:12}},'Player names, handicaps and course settings are kept.'),
+          h('div',{style:{fontSize:14,fontWeight:600,color:'var(--amber)',marginBottom:10}},'Start a new round?'),
+          h('div',{style:{fontSize:12,color:'var(--text2)',marginBottom:12}},'Scores, player names, and handicaps will be cleared. Course and tee settings are kept.'),
           h('div',{style:{display:'flex',gap:8}},
             h('button',{
               className:'btn btn-primary',
@@ -1092,7 +1168,7 @@ function SetupTab({state,setState,courses,course,tee,chcps,coursePar}){
       h('div',{style:{fontSize:12,color:'var(--text2)',marginBottom:12}},'Partners rotate every 6 holes — everyone plays with everyone:'),
       ...[0,1,2].map(seg=>{
         const{a,b}=getTeamForSeg(seg);
-        const segCol=['var(--gold)','#4ade80','#f87171'][seg];
+        const segCol=`var(--seg${seg})`;
         return h('div',{key:seg,style:{marginBottom:seg<2?12:0}},
           h('div',{style:{fontSize:10,fontFamily:"'DM Mono',monospace",letterSpacing:'0.15em',color:segCol,marginBottom:5}},
             ['THE OPENER','THE NEAT','THE NIGHTCAP'][seg]+' · HOLES '+(seg*6+1)+'–'+(seg*6+6)
