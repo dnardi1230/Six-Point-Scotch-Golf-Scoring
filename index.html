@@ -345,8 +345,9 @@ function calcHolePoints(holeData,holeIdx,course,teeIdx,players,chcps){
   const proxPlayerIdx=(!isNaN(proxParsed)&&proxParsed>=0&&proxParsed<=3)?proxParsed:null;
   const prox=proxPlayerIdx!=null?(teamA.includes(proxPlayerIdx)?'a':'b'):null;
 
-  // BIRDIE: natural birdie (gross <= par-1), per team. 1pt if any player on team makes it
-  // Team that has it gets 1pt if they have a birdie and opponent doesn't, or both=tie
+  // BIRDIE: natural birdie OR BETTER (gross <= par-1: birdie, eagle,
+  // albatross, hole-in-one all qualify), per team. 1pt if any player on
+  // team makes it and the opponent doesn't; both teams = tie = 0 pts.
   const birdie_a=teamA.some(pi=>gross[pi]!=null&&gross[pi]<=par-1);
   const birdie_b=teamB.some(pi=>gross[pi]!=null&&gross[pi]<=par-1);
   let birdie=null;
@@ -384,11 +385,16 @@ function calcHolePoints(holeData,holeIdx,course,teeIdx,players,chcps){
   if(total==='a')pts_a+=2; else if(total==='b')pts_b+=2;
   if(birdie==='a')pts_a+=1; else if(birdie==='b')pts_b+=1;
 
-  // UMBRELLA: one team wins all 6 points → becomes 12
+  // UMBRELLA: one team wins ALL 6 points on the hole AND a player on that
+  // team carded a natural birdie or better (eagle, albatross, hole-in-one
+  // all qualify) → the 6 points double to 12.
+  // Note: winning all 6 requires winning the BIRDIE category, so the
+  // birdie-or-better condition is checked explicitly here to enforce the
+  // rule directly and keep it robust to future point-structure changes.
   let umbrella=false;
   const base_a=pts_a,base_b=pts_b;
-  if(pts_a===6){umbrella=true;pts_a=12;}
-  if(pts_b===6){umbrella=true;pts_b=12;}
+  if(pts_a===6&&birdie_a){umbrella=true;pts_a=12;}
+  if(pts_b===6&&birdie_b){umbrella=true;pts_b=12;}
 
   // Multiplier
   let mult=1;
