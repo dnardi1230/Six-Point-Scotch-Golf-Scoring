@@ -1442,16 +1442,7 @@ function SetupTab({state,setState,courses,course,tee,chcps,coursePar,clearRound}
                   }
                 },
                 h('option',{value:'__manual__'},p.name||'— pick from roster —'),
-                // Hide roster entries already assigned to a DIFFERENT player slot,
-                // so the same person can't be picked twice. The entry matching
-                // this slot's own current name stays available.
-                ...roster
-                  .map((r,ri)=>({r,ri}))
-                  .filter(({r})=>{
-                    const takenElsewhere=state.players.some((pl,slotIdx)=>slotIdx!==i&&pl.name===r.name);
-                    return !takenElsewhere;
-                  })
-                  .map(({r,ri})=>h('option',{key:ri,value:String(ri)},r.name+(r.hi?` (HI ${r.hi})`:'')+(r.ghin?` · GHIN ${r.ghin}`:'')))
+                ...roster.map((r,ri)=>h('option',{key:ri,value:String(ri)},r.name+(r.hi?` (HI ${r.hi})`:'')+(r.ghin?` · GHIN ${r.ghin}`:'')))
               )
               :h('input',{className:'input',value:p.name,onChange:e=>updatePlayer(i,'name',e.target.value),placeholder:'Player '+(i+1)})
           ),
