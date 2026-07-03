@@ -244,11 +244,43 @@ const BUILT_IN_COURSES=[
 ];
 
 const TEAM_COLORS=['team-a','team-b'];
-// Team A indices per segment — true round-robin rotation:
-// Seg 0 (1-6):   P0+P1 vs P2+P3
-// Seg 1 (7-12):  P0+P2 vs P1+P3
-// Seg 2 (13-18): P0+P3 vs P1+P2
-const SEG_TEAMS=[[0,1],[0,2],[0,3]];
+// ─── GAME FORMATS ───────────────────────────────────────────────
+// Team arrays are Team A player indices per segment; Team B is the rest.
+const FORMATS={
+  six:{
+    label:'6-6-6 — partners rotate every 6 holes',
+    segs:3,holesPerSeg:6,
+    teams:[[0,1],[0,2],[0,3]],
+    names:['The Opener','The Neat','The Nightcap'],
+    shortNames:['OPENER','NEAT','NIGHTCAP'],
+    desc:'Partners rotate every 6 holes — everyone plays with everyone:',
+  },
+  nine:{
+    label:'9 & 9 — partners switch at the turn',
+    segs:2,holesPerSeg:9,
+    teams:[[0,1],[0,2]],
+    names:['The Front','The Back'],
+    shortNames:['FRONT','BACK'],
+    desc:'Partners switch at the turn — two 9-hole matches:',
+  },
+  eighteen:{
+    label:'18-hole match — same partners all round',
+    segs:1,holesPerSeg:18,
+    teams:[[0,1]],
+    names:['The Match'],
+    shortNames:['MATCH'],
+    desc:'Fixed partners for the full 18-hole match:',
+  },
+};
+// Module-level current format. App syncs this from state at the top of
+// every render, so all hoisted helpers below see the right config.
+let CURRENT_FORMAT='six';
+function getFmt(){return FORMATS[CURRENT_FORMAT]||FORMATS.six;}
+function getSegCount(){return getFmt().segs;}
+function getHolesPerSeg(){return getFmt().holesPerSeg;}
+function getSegNames(){return getFmt().names;}
+function getSegShortNames(){return getFmt().shortNames;}
+function segOfHoleIdx(holeIdx){return Math.min(Math.floor(holeIdx/getHolesPerSeg()),getSegCount()-1);}
 
 // Player color per index — used for both the leaderboard and the
 // segment-card border colors. Kept as a single shared list so the
@@ -301,7 +333,7 @@ function calcPlayerNets(state,holeResults){
     for(let i=0;i<18;i++){
       if(state.holes[i].scores[pi]==null)continue;
       const r=holeResults[i];
-      const{a:teamA}=getTeamForSeg(Math.floor(i/6));
+      const{a:teamA}=getTeamForSeg(segOfHoleIdx(i));
       sum+=teamA.includes(pi)?(r.pts.a-r.pts.b):(r.pts.b-r.pts.a);
     }
     return sum;
@@ -314,7 +346,7 @@ function calcPlayerPtsArr(state,holeResults){
     for(let i=0;i<18;i++){
       if(state.holes[i].scores[pi]==null)continue;
       const r=holeResults[i];
-      const{a:teamA}=getTeamForSeg(Math.floor(i/6));
+      const{a:teamA}=getTeamForSeg(segOfHoleIdx(i));
       sum+=teamA.includes(pi)?r.pts.a:r.pts.b;
     }
     return sum;
@@ -375,10 +407,11 @@ function strokesPerHole(chcp,hcpRanks){
 }
 
 // ─── SCORING LOGIC ────────────────────────────────────────────────
-function getSegment(hole){return Math.floor((hole-1)/6)} // 0,1,2
+function getSegment(hole){return segOfHoleIdx(hole-1);}
 function getTeamForSeg(seg,players){
   // returns [playerIndices] for each team in this segment
-  const a=SEG_TEAMS[seg];
+  const f=getFmt();
+  const a=f.teams[Math.min(seg,f.segs-1)];
   const b=[0,1,2,3].filter(i=>!a.includes(i));
   return{a,b};
 }
@@ -475,6 +508,7 @@ function defaultState(){
     tab:'scoring',
     courseId:'stonebridge',
     teeIdx:1,
+    format:'six',
     players:[
       {name:'Player 1',hi:''},
       {name:'Player 2',hi:''},
@@ -498,6 +532,10 @@ function App(){
     return saved||defaultState();
   });
 
+  // Sync the module-level format before any memos/children compute,
+  // so all hoisted segment helpers use the right config this render.
+  CURRENT_FORMAT=state.format||'six';
+
   useEffect(()=>{saveState(state)},[state]);
 
   const courses=useMemo(()=>[...BUILT_IN_COURSES,...(state.customCourses||[])]
@@ -516,15 +554,16 @@ function App(){
   // Calc all holes
   const holeResults=useMemo(()=>state.holes.map((h,i)=>
     calcHolePoints(h,i,course,state.teeIdx,state.players,chcps)
-  ),[state.holes,course,state.teeIdx,state.players,chcps]);
+  ),[state.holes,course,state.teeIdx,state.players,chcps,state.format]);
 
   // Total points by segment
-  const segTotals=useMemo(()=>[0,1,2].map(seg=>{
-    const hStart=seg*6,hEnd=hStart+6;
+  const segTotals=useMemo(()=>Array.from({length:getSegCount()},(_,seg)=>{
+    const hps=getHolesPerSeg();
+    const hStart=seg*hps,hEnd=Math.min(hStart+hps,18);
     let a=0,b=0;
     for(let i=hStart;i<hEnd;i++){a+=holeResults[i].pts.a;b+=holeResults[i].pts.b;}
     return{a,b};
-  }),[holeResults]);
+  }),[holeResults,state.format]);
 
   // Grand total
   const grandTotal=useMemo(()=>({
@@ -666,7 +705,7 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
   const{a:teamA,b:teamB}=getTeamForSeg(seg);
   const strokes=result.strokes||[0,0,0,0];
 
-  const segLabel=['The Opener','The Neat','The Nightcap'][seg];
+  const segLabel=getSegNames()[seg];
   const teamANames=teamA.map(i=>state.players[i].name).join(' & ');
   const teamBNames=teamB.map(i=>state.players[i].name).join(' & ');
 
@@ -689,14 +728,15 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
   };
 
   // Segment recap holes
-  const segStart=seg*6, segEnd=segStart+6;
-  const segHoles=Array.from({length:6},(_,i)=>segStart+i);
+  const hps=getHolesPerSeg();
+  const segStart=seg*hps, segEnd=Math.min(segStart+hps,18);
+  const segHoles=Array.from({length:segEnd-segStart},(_,i)=>segStart+i);
 
   return h('div',{className:'page'},
     // Hole grid with segment-color legend
     h('div',null,
       h('div',{className:'seg-legend'},
-        ['The Opener','The Neat','The Nightcap'].map((lbl,si)=>
+        getSegNames().map((lbl,si)=>
           h('span',{key:si,className:'seg-chip'},
             h('span',{className:'seg-chip-dot',style:{background:`var(--seg${si})`}}),
             lbl
@@ -870,7 +910,7 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
     // Segment recap
     h('details',{style:{marginBottom:8}},
       h('summary',{style:{background:'var(--surface2)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 14px',marginBottom:4}},
-        h('span',{style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:16,letterSpacing:'0.05em',color:'var(--text2)'}},['THE OPENER','THE NEAT','THE NIGHTCAP'][seg]+' RECAP'),
+        h('span',{style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:16,letterSpacing:'0.05em',color:'var(--text2)'}},getSegNames()[seg].toUpperCase()+' RECAP'),
         h('span',{className:'chevron'},'▼')
       ),
       h('div',{style:{background:'var(--surface2)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 14px'}},
@@ -930,7 +970,6 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
   const b9par=course?course.par.slice(9).reduce((s,p)=>s+p,0):36;
   const totalPar=f9par+b9par;
 
-  const segNames=['The Opener','The Neat','The Nightcap'];
   // Use the shared PLAYER_COLORS list so leaderboard and setup tabs match.
   const playerColors=PLAYER_COLORS;
 
@@ -940,7 +979,7 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
   function playerHoleNet(pi,holeIdx){
     if(state.holes[holeIdx].scores[pi]==null)return 0;
     const r=holeResults[holeIdx];
-    const seg=Math.floor(holeIdx/6);
+    const seg=segOfHoleIdx(holeIdx);
     const{a:teamA}=getTeamForSeg(seg);
     const isTeamA=teamA.includes(pi);
     return isTeamA?(r.pts.a-r.pts.b):(r.pts.b-r.pts.a);
@@ -950,7 +989,7 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
   // Both players on a team receive the same gross points — team points from holeResults
   function playerTotalPts(pi){
     return holeResults.reduce((sum,r,holeIdx)=>{
-      const seg=Math.floor(holeIdx/6);
+      const seg=segOfHoleIdx(holeIdx);
       const{a:teamA,b:teamB}=getTeamForSeg(seg);
       const isTeamA=teamA.includes(pi);
       // Only count if this player has entered a score on this hole
@@ -961,8 +1000,9 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
 
   // Per-player gross points per segment — teammates always get the same pts
   function playerSegPts(pi,seg){
-    const start=seg*6;
-    return holeResults.slice(start,start+6).reduce((sum,r,si)=>{
+    const hps=getHolesPerSeg();
+    const start=seg*hps;
+    return holeResults.slice(start,Math.min(start+hps,18)).reduce((sum,r,si)=>{
       const holeIdx=start+si;
       const{a:teamA,b:teamB}=getTeamForSeg(seg);
       const isTeamA=teamA.includes(pi);
@@ -980,9 +1020,10 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
 
   // Per-player net per segment
   function playerSegNet(pi,seg){
-    const start=seg*6;
+    const hps=getHolesPerSeg();
+    const start=seg*hps;
     let sum=0;
-    for(let i=start;i<start+6;i++)sum+=playerHoleNet(pi,i);
+    for(let i=start;i<Math.min(start+hps,18);i++)sum+=playerHoleNet(pi,i);
     return sum;
   }
 
@@ -1142,8 +1183,8 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
             // Per-segment breakdown — shows both gross and net so the
             // running team-pts column is still visible alongside what
             // actually drives the payout.
-            h('div',{style:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5,marginBottom:8}},
-              [0,1,2].map(seg=>{
+            h('div',{style:{display:'grid',gridTemplateColumns:`repeat(${getSegCount()},1fr)`,gap:5,marginBottom:8}},
+              Array.from({length:getSegCount()},(_,seg)=>{
                 const{a:teamA,b:teamB}=getTeamForSeg(seg);
                 const partner=teamA.includes(pi)
                   ?teamA.filter(i=>i!==pi).map(i=>state.players[i].name)[0]
@@ -1155,7 +1196,7 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
                   h('div',{style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:snCol,lineHeight:1}},
                     (sn>0?'+':'')+sn),
                   h('div',{style:{fontSize:9,color:'var(--text3)',marginTop:1}},`(${sp} pts)`),
-                  h('div',{style:{fontSize:8,color:'var(--text3)',fontFamily:"'DM Mono',monospace",letterSpacing:'0.08em',marginTop:3}},['OPENER','NEAT','NIGHTCAP'][seg]),
+                  h('div',{style:{fontSize:8,color:'var(--text3)',fontFamily:"'DM Mono',monospace",letterSpacing:'0.08em',marginTop:3}},getSegShortNames()[seg]),
                   h('div',{style:{fontSize:9,color:'var(--text2)',marginTop:2}},`w/ ${partner}`)
                 );
               })
@@ -1232,7 +1273,7 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
           Array.from({length:18},(_,i)=>{
             const r=holeResults[i];
             const par=course?.par[i]||4;
-            const seg=Math.floor(i/6);
+            const seg=segOfHoleIdx(i);
             return h('tr',{key:i,style:{background:i===state.currentHole?'rgba(212,168,67,0.07)':seg%2===1?'rgba(255,255,255,0.02)':''}},
               h('td',{style:{textAlign:'left',paddingLeft:6,fontFamily:"'DM Mono',monospace",fontSize:11}},i+1),
               h('td',null,par),
@@ -1388,6 +1429,34 @@ function SetupTab({state,setState,courses,course,tee,chcps,coursePar,clearRound}
           )
         ),
 
+    h('div',{className:'section-title'},'Game Format'),
+    h('div',{className:'card'},
+      h('div',{className:'col'},
+        Object.entries(FORMATS).map(([key,f])=>
+          h('label',{key,style:{
+            display:'flex',alignItems:'center',gap:10,padding:'10px 12px',
+            background:(state.format||'six')===key?'var(--amber-dim)':'var(--surface3)',
+            border:`1.5px solid ${(state.format||'six')===key?'var(--gold)':'var(--border)'}`,
+            borderRadius:8,cursor:'pointer',transition:'all 0.15s'
+          }},
+            h('input',{
+              type:'radio',name:'gameFormat',value:key,
+              checked:(state.format||'six')===key,
+              onChange:()=>setState(s=>({...s,format:key})),
+              style:{accentColor:'#d4a843'}
+            }),
+            h('div',null,
+              h('div',{style:{fontSize:14,fontWeight:600,color:(state.format||'six')===key?'var(--gold)':'var(--text1)'}},f.label),
+              h('div',{style:{fontSize:11,color:'var(--text3)',marginTop:2}},
+                f.segs===1?'One 18-hole match, fixed teams':`${f.segs} segments of ${f.holesPerSeg} holes each`)
+            )
+          )
+        ),
+        h('div',{style:{fontSize:11,color:'var(--text3)',fontStyle:'italic',marginTop:2}},
+          'Changing format mid-round recalculates all points with the new team rotation.')
+      )
+    ),
+
     h('div',{className:'section-title'},'Course & Tee'),
     h('div',{className:'card'},
       h('div',{className:'col'},
@@ -1476,13 +1545,13 @@ function SetupTab({state,setState,courses,course,tee,chcps,coursePar,clearRound}
 
     h('div',{className:'section-title'},'Partnership Rotation'),
     h('div',{className:'card'},
-      h('div',{style:{fontSize:12,color:'var(--text2)',marginBottom:12}},'Partners rotate every 6 holes — everyone plays with everyone:'),
-      ...[0,1,2].map(seg=>{
+      h('div',{style:{fontSize:12,color:'var(--text2)',marginBottom:12}},getFmt().desc),
+      ...Array.from({length:getSegCount()},(_,seg)=>{
         const{a,b}=getTeamForSeg(seg);
         const segCol=`var(--seg${seg})`;
         return h('div',{key:seg,style:{marginBottom:seg<2?12:0}},
           h('div',{style:{fontSize:10,fontFamily:"'DM Mono',monospace",letterSpacing:'0.15em',color:segCol,marginBottom:5}},
-            ['THE OPENER','THE NEAT','THE NIGHTCAP'][seg]+' · HOLES '+(seg*6+1)+'–'+(seg*6+6)
+            getSegNames()[seg].toUpperCase()+' · HOLES '+(seg*getHolesPerSeg()+1)+'–'+Math.min((seg+1)*getHolesPerSeg(),18)
           ),
           h('div',{style:{display:'flex',alignItems:'center',gap:8}},
             h('div',{style:{flex:1,background:'var(--surface3)',borderRadius:6,padding:'8px 10px',display:'flex',gap:6,alignItems:'center'}},
