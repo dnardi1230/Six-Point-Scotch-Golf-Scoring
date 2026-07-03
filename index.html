@@ -285,6 +285,62 @@ const SK='sps_v3';
 const ROSTER_KEY='sps_roster_v1';
 function loadRoster(){try{return JSON.parse(localStorage.getItem(ROSTER_KEY))||[];}catch{return[];}}
 function saveRoster(r){try{localStorage.setItem(ROSTER_KEY,JSON.stringify(r));}catch{}}
+const HISTORY_KEY='sps_history_v1';
+function loadHistory(){try{return JSON.parse(localStorage.getItem(HISTORY_KEY))||[];}catch{return[];}}
+function saveHistory(hst){try{localStorage.setItem(HISTORY_KEY,JSON.stringify(hst));}catch{}}
+
+// Blank-round helpers shared by reset / new round / undo
+function blankHoles(){return Array.from({length:18},()=>({scores:[null,null,null,null],prox:null,press:false,roll:false,reroll:false}));}
+function defaultPlayers(){return[{name:'Player 1',hi:''},{name:'Player 2',hi:''},{name:'Player 3',hi:''},{name:'Player 4',hi:''}];}
+
+// Per-player net (team pts − opponent pts, per hole) across all 18 holes.
+// Function declarations are hoisted so getTeamForSeg is available.
+function calcPlayerNets(state,holeResults){
+  return state.players.map((_,pi)=>{
+    let sum=0;
+    for(let i=0;i<18;i++){
+      if(state.holes[i].scores[pi]==null)continue;
+      const r=holeResults[i];
+      const{a:teamA}=getTeamForSeg(Math.floor(i/6));
+      sum+=teamA.includes(pi)?(r.pts.a-r.pts.b):(r.pts.b-r.pts.a);
+    }
+    return sum;
+  });
+}
+// Per-player gross points across all 18 holes
+function calcPlayerPtsArr(state,holeResults){
+  return state.players.map((_,pi)=>{
+    let sum=0;
+    for(let i=0;i<18;i++){
+      if(state.holes[i].scores[pi]==null)continue;
+      const r=holeResults[i];
+      const{a:teamA}=getTeamForSeg(Math.floor(i/6));
+      sum+=teamA.includes(pi)?r.pts.a:r.pts.b;
+    }
+    return sum;
+  });
+}
+// Minimum-transaction settlement (greedy creditor/debtor matching)
+function calcSettlement(nets,dollarsPerPt){
+  const creditors=[],debtors=[];
+  nets.forEach((n,pi)=>{
+    if(n>0)creditors.push({pi,amt:n});
+    else if(n<0)debtors.push({pi,amt:-n});
+  });
+  creditors.sort((a,b)=>b.amt-a.amt);
+  debtors.sort((a,b)=>b.amt-a.amt);
+  const txs=[];
+  let ci=0,di=0;
+  while(ci<creditors.length&&di<debtors.length){
+    const cr=creditors[ci],d=debtors[di];
+    const pay=Math.min(cr.amt,d.amt);
+    if(pay>0)txs.push({from:d.pi,to:cr.pi,points:pay,dollars:pay*dollarsPerPt});
+    cr.amt-=pay; d.amt-=pay;
+    if(cr.amt===0)ci++;
+    if(d.amt===0)di++;
+  }
+  return txs;
+}
 function loadState(){
   try{
     const s=localStorage.getItem(SK);
@@ -479,6 +535,66 @@ function App(){
   const setTab=t=>setState(s=>({...s,tab:t}));
   const setHole=i=>setState(s=>({...s,currentHole:i}));
 
+  // ── Round history + undo ──────────────────────────────────────
+  const [history,setHistory]=useState(()=>loadHistory());
+  useEffect(()=>saveHistory(history),[history]);
+  const [undoSnap,setUndoSnap]=useState(null);
+
+  // Auto-dismiss the undo option after 30 seconds
+  useEffect(()=>{
+    if(!undoSnap)return;
+    const t=setTimeout(()=>setUndoSnap(null),30000);
+    return()=>clearTimeout(t);
+  },[undoSnap]);
+
+  const anyScores=state.holes.some(hh=>hh.scores.some(s=>s!=null));
+
+  // Build an archival record of the current round for history
+  function buildRoundRecord(){
+    const nets=calcPlayerNets(state,holeResults);
+    const ptsArr=calcPlayerPtsArr(state,holeResults);
+    const txs=calcSettlement(nets,state.dollarPerPt||1);
+    const grossArr=state.players.map((_,pi)=>state.holes.reduce((s,hh)=>s+(hh.scores[pi]||0),0));
+    const holesPlayed=state.holes.filter(hh=>hh.scores.every(s=>s!=null)).length;
+    const umbrellas=holeResults.filter(r=>r.umbrella).length;
+    return{
+      date:new Date().toISOString(),
+      courseName:course?.name||'Unknown course',
+      teeName:tee?.name||'',
+      dollarPerPt:state.dollarPerPt||1,
+      holesPlayed,umbrellas,
+      players:state.players.map((p,i)=>({name:p.name,hi:p.hi,chcp:chcps[i],net:nets[i],pts:ptsArr[i],gross:grossArr[i]})),
+      settlement:txs.map(t=>({from:state.players[t.from].name,to:state.players[t.to].name,points:t.points,dollars:t.dollars})),
+    };
+  }
+
+  // Clear the round. Archives to history first (if any scores were entered)
+  // and keeps an undo snapshot for 30 seconds.
+  function clearRound({clearPlayers}={}){
+    const archived=anyScores;
+    if(archived)setHistory(hst=>[buildRoundRecord(),...hst].slice(0,50));
+    setUndoSnap({
+      holes:state.holes,
+      currentHole:state.currentHole,
+      players:state.players,
+      archived,
+    });
+    setState(s=>({
+      ...s,
+      holes:blankHoles(),
+      currentHole:0,
+      ...(clearPlayers?{players:defaultPlayers()}:{}),
+    }));
+  }
+
+  function undoClear(){
+    if(!undoSnap)return;
+    setState(s=>({...s,holes:undoSnap.holes,currentHole:undoSnap.currentHole,players:undoSnap.players}));
+    // Remove the auto-archived record so the round isn't duplicated in history
+    if(undoSnap.archived)setHistory(hst=>hst.slice(1));
+    setUndoSnap(null);
+  }
+
   const updateHole=(idx,key,val)=>setState(s=>{
     const holes=[...s.holes];
     holes[idx]={...holes[idx],[key]:val};
@@ -513,16 +629,34 @@ function App(){
       tabs.map(t=>h('button',{key:t.id,className:`tab-btn${state.tab===t.id?' active':''}`,onClick:()=>setTab(t.id)},t.label))
     ),
     h('div',{className:'tab-content'},
-      state.tab==='scoring'&&h(ScoringTab,{state,setState,course,tee,chcps,holeResults,segTotals,isHoleComplete,setHole,updateHole,setScore}),
-      state.tab==='leaderboard'&&h(LeaderboardTab,{state,setState,course,tee,chcps,holeResults,segTotals,grandTotal}),
-      state.tab==='setup'&&h(SetupTab,{state,setState,courses,course,tee,chcps,coursePar}),
+      state.tab==='scoring'&&h(ScoringTab,{state,setState,course,tee,chcps,holeResults,segTotals,isHoleComplete,setHole,updateHole,setScore,clearRound}),
+      state.tab==='leaderboard'&&h(LeaderboardTab,{state,setState,course,tee,chcps,holeResults,segTotals,grandTotal,history,setHistory}),
+      state.tab==='setup'&&h(SetupTab,{state,setState,courses,course,tee,chcps,coursePar,clearRound}),
       state.tab==='courses'&&h(CoursesTab,{state,setState,courses}),
+    ),
+    // ── Undo banner (shows for 30s after a round is cleared) ──────
+    undoSnap&&h('div',{style:{
+      position:'fixed',bottom:16,left:'50%',transform:'translateX(-50%)',
+      background:'var(--surface3)',border:'1px solid var(--gold)',borderRadius:10,
+      padding:'10px 16px',display:'flex',alignItems:'center',gap:12,zIndex:300,
+      boxShadow:'0 4px 24px rgba(0,0,0,0.5)',maxWidth:'92vw'
+    }},
+      h('span',{style:{fontSize:13,color:'var(--text1)',whiteSpace:'nowrap'}},
+        undoSnap.archived?'Round saved to history':'Round cleared'),
+      h('button',{
+        className:'btn btn-primary btn-sm',
+        onClick:undoClear
+      },'Undo'),
+      h('button',{
+        className:'btn btn-ghost btn-sm',
+        onClick:()=>setUndoSnap(null)
+      },'✕')
     )
   );
 }
 
 // ─── SCORING TAB ─────────────────────────────────────────────────
-function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHoleComplete,setHole,updateHole,setScore}){
+function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHoleComplete,setHole,updateHole,setScore,clearRound}){
   const [confirmReset,setConfirmReset]=useState(false);
   const hi=state.currentHole;
   const result=holeResults[hi];
@@ -612,8 +746,15 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
             ),
             h('span',{className:`badge ${isA?'badge-blue':'badge-gold'}`,style:{fontSize:10,flexShrink:0}},isA?'A':'B')
           ),
-          h('div',{className:'player-strokes'},
-            `HCP ${chcps[pi]} · +${strokes[pi]} stroke${strokes[pi]!==1?'s':''}`
+          h('div',{className:'player-strokes',style:{display:'flex',alignItems:'center',gap:6}},
+            h('span',null,`HCP ${chcps[pi]}`),
+            strokes[pi]>0
+              ?h('span',{title:`${strokes[pi]} stroke${strokes[pi]!==1?'s':''} on this hole`,
+                  style:{color:'var(--gold)',letterSpacing:'2px',fontSize:9}},
+                  '●'.repeat(strokes[pi]))
+              :strokes[pi]<0
+                ?h('span',{style:{color:'var(--blue)',fontSize:10}},`gives ${-strokes[pi]}`)
+                :null
           ),
           h('div',{className:'score-stepper'},
             h('button',{className:'step-btn',onClick:()=>stepScore(hi,pi,-1,gross,par)},'−'),
@@ -662,6 +803,22 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
         );
       })
     ),
+
+    // Half-entered hole warning
+    (()=>{
+      const entered=holeData.scores.filter(s=>s!=null).length;
+      if(entered>0&&entered<4){
+        return h('div',{style:{
+          background:'var(--amber-dim)',border:'1px solid rgba(245,158,11,0.3)',
+          borderRadius:6,padding:'7px 12px',marginBottom:10,
+          fontSize:12,color:'var(--amber)',display:'flex',alignItems:'center',gap:8
+        }},
+          h('span',{style:{fontSize:13}},'⚠'),
+          h('span',null,`${entered} of 4 scores entered — points are provisional until all scores are in`)
+        );
+      }
+      return null;
+    })(),
 
     // Running score
     h('div',{style:{display:'flex',gap:8,marginBottom:10}},
@@ -750,7 +907,7 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
               className:'btn btn-sm',
               style:{background:'var(--red)',color:'#fff',border:'none'},
               onClick:()=>{
-                setState(s=>({...s,holes:Array.from({length:18},()=>({scores:[null,null,null,null],prox:null,press:false,roll:false,reroll:false})),currentHole:0}));
+                clearRound({clearPlayers:false});
                 setConfirmReset(false);
               }
             },'Yes, Reset'),
@@ -764,9 +921,10 @@ function ScoringTab({state,setState,course,tee,chcps,holeResults,segTotals,isHol
 }
 
 // ─── LEADERBOARD TAB ─────────────────────────────────────────────
-function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,grandTotal}){
+function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,grandTotal,history,setHistory}){
   const [dollarsPerPt,setDollarsPerPt]=useState(state.dollarPerPt||1);
   useEffect(()=>{setState(s=>({...s,dollarPerPt:dollarsPerPt}))},[dollarsPerPt]);
+  const [copied,setCopied]=useState(false);
 
   const f9par=course?course.par.slice(0,9).reduce((s,p)=>s+p,0):36;
   const b9par=course?course.par.slice(9).reduce((s,p)=>s+p,0):36;
@@ -884,7 +1042,55 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
 
   const anyScored=allPlayerPts.some(p=>p>0);
 
+  // ── Share results as text (clipboard) ──────────────────────────
+  function fallbackCopy(text){
+    const ta=document.createElement('textarea');
+    ta.value=text;
+    ta.style.position='fixed';ta.style.opacity='0';
+    document.body.appendChild(ta);
+    ta.select();
+    try{document.execCommand('copy');}catch{}
+    document.body.removeChild(ta);
+  }
+  function shareResults(){
+    const dateStr=new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+    const lines=[];
+    lines.push(`SIX-POINT SCOTCH — ${course?.name||''}${tee?` (${tee.name})`:''}`);
+    lines.push(dateStr);
+    lines.push('');
+    lines.push('Standings (net):');
+    ranked.forEach((pi,rk)=>{
+      const n=allPlayerNets[pi];
+      lines.push(`${rk+1}. ${state.players[pi].name}  ${(n>0?'+':'')+n}  (${allPlayerPts[pi]} pts)`);
+    });
+    const txs=settlePayments();
+    if(txs.length){
+      lines.push('');
+      lines.push('Settlement:');
+      txs.forEach(t=>lines.push(`${state.players[t.from].name} pays ${state.players[t.to].name} $${t.dollars.toFixed(2)} (${t.points} pts)`));
+    }
+    const umbrellas=holeResults.filter(r=>r.umbrella).length;
+    if(umbrellas>0){
+      lines.push('');
+      lines.push(`☂ Umbrellas: ${umbrellas}`);
+    }
+    const text=lines.join('\n');
+    const done=()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);};
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(done).catch(()=>{fallbackCopy(text);done();});
+    }else{
+      fallbackCopy(text);done();
+    }
+  }
+
   return h('div',{className:'page'},
+
+    // ── Share button ──────────────────────────────────────────────
+    anyScored&&h('button',{
+      className:'btn btn-ghost',
+      style:{width:'100%',marginBottom:14,borderColor:copied?'var(--green)':'var(--border2)',color:copied?'var(--green)':'var(--text1)'},
+      onClick:shareResults
+    },copied?'✓ Copied to clipboard':'📋 Share Results'),
 
     // ── Gross Scores ─────────────────────────────────────────────
     h('div',{className:'section-title'},'Gross Scores'),
@@ -1047,12 +1253,66 @@ function LeaderboardTab({state,setState,course,tee,chcps,holeResults,segTotals,g
           )
         )
       )
-    )
+    ),
+
+    // ── Round History ─────────────────────────────────────────────
+    h('div',{className:'section-title',style:{marginTop:20}},'Round History'),
+    (!history||history.length===0)
+      ?h('div',{style:{background:'var(--surface2)',border:'1px solid var(--border)',borderRadius:8,padding:'16px',textAlign:'center',color:'var(--text3)',fontSize:13,fontStyle:'italic'}},
+          'No saved rounds yet. Finished rounds are archived automatically when you reset or start a new round.')
+      :h('div',null,
+          ...history.map((rec,ri)=>{
+            const d=new Date(rec.date);
+            const dateStr=d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+            const sorted=[...rec.players].sort((a,b)=>(b.net||0)-(a.net||0));
+            return h('details',{key:ri,className:'card',style:{marginBottom:8}},
+              h('summary',{style:{padding:0}},
+                h('div',{style:{flex:1}},
+                  h('div',{style:{fontWeight:600,fontSize:14}},`${dateStr} — ${rec.courseName}${rec.teeName?` (${rec.teeName})`:''}`),
+                  h('div',{style:{fontSize:11,color:'var(--text3)',fontFamily:"'DM Mono',monospace",marginTop:3}},
+                    `${rec.players.map(p=>p.name).join(' · ')}  ·  ${rec.holesPlayed}/18 holes${rec.umbrellas?`  ·  ☂×${rec.umbrellas}`:''}`)
+                ),
+                h('span',{className:'chevron'},'▼')
+              ),
+              h('div',{style:{marginTop:12,paddingTop:12,borderTop:'1px solid var(--border)'}},
+                // Standings
+                h('div',{className:'label',style:{marginBottom:6}},'Final Standings'),
+                ...sorted.map((p,rk)=>{
+                  const netCol=p.net>0?'var(--green)':p.net<0?'var(--red)':'var(--text2)';
+                  return h('div',{key:rk,style:{display:'flex',justifyContent:'space-between',alignItems:'baseline',padding:'4px 0'}},
+                    h('span',{style:{fontSize:13}},`${rk+1}. ${p.name}`,
+                      h('span',{style:{fontSize:11,color:'var(--text3)',marginLeft:8,fontFamily:"'DM Mono',monospace"}},
+                        `gross ${p.gross||'—'}  ·  ${p.pts} pts`)),
+                    h('span',{style:{fontFamily:"'Bebas Neue',sans-serif",fontSize:17,color:netCol}},(p.net>0?'+':'')+p.net)
+                  );
+                }),
+                // Settlement
+                rec.settlement&&rec.settlement.length>0&&h('div',{style:{marginTop:10}},
+                  h('div',{className:'label',style:{marginBottom:6}},'Settlement'),
+                  ...rec.settlement.map((t,ti)=>
+                    h('div',{key:ti,style:{fontSize:12,color:'var(--text2)',padding:'3px 0'}},
+                      `${t.from} paid ${t.to} $${(t.dollars||0).toFixed(2)} (${t.points} pts)`)
+                  )
+                ),
+                // Delete
+                h('div',{style:{marginTop:12}},
+                  h('button',{
+                    className:'btn btn-danger btn-sm',
+                    onClick:e=>{
+                      e.preventDefault();
+                      setHistory(hst=>hst.filter((_,idx)=>idx!==ri));
+                    }
+                  },'Delete Round')
+                )
+              )
+            );
+          })
+        )
   );
 }
 
 // ─── SETUP TAB ────────────────────────────────────────────────────
-function SetupTab({state,setState,courses,course,tee,chcps,coursePar}){
+function SetupTab({state,setState,courses,course,tee,chcps,coursePar,clearRound}){
   const updatePlayer=(i,key,val)=>setState(s=>{
     const players=[...s.players];
     players[i]={...players[i],[key]:val};
@@ -1097,18 +1357,8 @@ function SetupTab({state,setState,courses,course,tee,chcps,coursePar}){
   }
 
   function newRound(){
-    setState(s=>({
-      ...s,
-      players:[
-        {name:'Player 1',hi:''},
-        {name:'Player 2',hi:''},
-        {name:'Player 3',hi:''},
-        {name:'Player 4',hi:''},
-      ],
-      holes:Array.from({length:18},()=>({scores:[null,null,null,null],prox:null,press:false,roll:false,reroll:false})),
-      currentHole:0,
-      tab:'scoring',
-    }));
+    clearRound({clearPlayers:true});
+    setState(s=>({...s,tab:'scoring'}));
     setConfirmNew(false);
   }
 
